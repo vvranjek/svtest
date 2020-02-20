@@ -23,7 +23,6 @@ RUN apt-get update &&   \
        libperlio-gzip-perl \
        libjson-perl     \
        zlib1g-dev       \
-       libtirpc         \
        bsdmainutils
 
 

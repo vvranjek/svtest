@@ -45,7 +45,6 @@ static inline bool InsecureRandBool() {
 static inline std::vector<uint8_t> InsecureRandBytes(size_t len) {
     return insecure_rand_ctx.randbytes(len);
 }
-class GlobalConfig;
 
 /**
  * Basic testing setup.
@@ -53,7 +52,6 @@ class GlobalConfig;
  */
 struct BasicTestingSetup {
     ECCVerifyHandle globalVerifyHandle;
-    GlobalConfig& testConfig;
 
     BasicTestingSetup(const std::string &chainName = CBaseChainParams::MAIN);
     ~BasicTestingSetup();

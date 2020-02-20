@@ -12,7 +12,7 @@
 #include <variant>
 #include <vector>
 
-#include "big_int.h"
+#include "big_int.hpp"
 
 class scriptnum_overflow_error : public std::overflow_error
 {
@@ -46,7 +46,6 @@ class CScriptNum
 public:
     static const size_t MAXIMUM_ELEMENT_SIZE = 4;
 
-    CScriptNum():m_value(0){}
     explicit CScriptNum(const int64_t& n) : m_value(n) {}
     explicit CScriptNum(const bsv::bint& n) : m_value(n) {}
     explicit CScriptNum(const std::vector<uint8_t>& vch,
@@ -81,9 +80,6 @@ public:
 
     int getint() const;
     std::vector<uint8_t> getvch() const;
-
-    // Precondition: n <= numeric_limit<int32_t>::max() and n>=0
-    size_t to_size_t_limited() const;
 
 private:
     bool equal_index(const CScriptNum&) const;

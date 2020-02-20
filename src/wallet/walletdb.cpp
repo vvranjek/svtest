@@ -17,13 +17,11 @@
 #include "utiltime.h"
 #include "validation.h" // For CheckRegularTransaction
 #include "wallet/wallet.h"
-#include "config.h"
 
 #include <boost/thread.hpp>
 #include <boost/version.hpp>
 
 #include <atomic>
-#include <config.h>
 
 //
 // CWalletDB
@@ -303,15 +301,9 @@ bool ReadKeyValue(CWallet *pwallet, CDataStream &ssKey, CDataStream &ssValue,
             CWalletTx wtx;
             ssValue >> wtx;
             CValidationState state;
-            const Config& config = GlobalConfig::GetConfig();
-            // Assume post-Genesis sig-op count as limit. It's unlikely that user stores invalid txs (those with 
-            // too high sigop count) in his wallet and would try to use them before Genesis
-            bool genesisEnabled =  wtx.IsGenesisEnabled();
-            uint64_t maxTxSigOpsCountConsensusBeforeGenesis = config.GetMaxTxSigOpsCountConsensusBeforeGenesis();
-            uint64_t maxTxSizeConsensus = config.GetMaxTxSize(genesisEnabled, true);
             bool isValid = wtx.IsCoinBase()
-                               ? CheckCoinbase(wtx, state, maxTxSigOpsCountConsensusBeforeGenesis, maxTxSizeConsensus, genesisEnabled)
-                               : CheckRegularTransaction(wtx, state, maxTxSigOpsCountConsensusBeforeGenesis, maxTxSizeConsensus, genesisEnabled);
+                               ? CheckCoinbase(wtx, state)
+                               : CheckRegularTransaction(wtx, state);
             if (wtx.GetId() != hash || !isValid) {
                 return false;
             }

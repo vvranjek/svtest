@@ -6,7 +6,6 @@
 #include "script.h"
 #include "int_serialization.h"
 #include "script_num.h"
-#include "consensus/consensus.h"
 
 #include "tinyformat.h"
 #include "utilstrencodings.h"
@@ -274,109 +273,44 @@ const char *GetOpName(opcodetype opcode) {
     }
 }
 
-uint64_t CScript::GetSigOpCount(bool fAccurate, bool isGenesisEnabled, bool& sigOpCountError) const
-{
-    sigOpCountError = false;
-    uint64_t n = 0;
+unsigned int CScript::GetSigOpCount(bool fAccurate) const {
+    unsigned int n = 0;
     const_iterator pc = begin();
     opcodetype lastOpcode = OP_INVALIDOPCODE;
-    std::vector<uint8_t> lastVch;
-    std::vector<uint8_t> vch;
-    while (pc < end())
-    {
+    while (pc < end()) {
         opcodetype opcode;
-        vch.clear();
-        if (!GetOp(pc, opcode, vch)) break;
+        if (!GetOp(pc, opcode)) break;
         if (opcode == OP_CHECKSIG || opcode == OP_CHECKSIGVERIFY)
-        {
             n++;
-        }
         else if (opcode == OP_CHECKMULTISIG ||
-            opcode == OP_CHECKMULTISIGVERIFY)
-        {
-            if ((fAccurate || isGenesisEnabled) && lastOpcode >= OP_1 && lastOpcode <= OP_16)
-            {
+                 opcode == OP_CHECKMULTISIGVERIFY) {
+            if (fAccurate && lastOpcode >= OP_1 && lastOpcode <= OP_16)
                 n += DecodeOP_N(lastOpcode);
-            }
-            // post Genesis we always count accurate ops because it's not significantly costlier
-            else if (isGenesisEnabled)
-            {
-                if (lastOpcode == OP_0) 
-                {
-                    // Checking multisig with 0 keys, so nothing to add to n
-                }                
-                else if (lastVch.size() > CScriptNum::MAXIMUM_ELEMENT_SIZE)
-                {
-                    // When trying to spend such output EvalScript does not allow numbers bigger than 4 bytes
-                    // and the execution of such script would fail and make the coin unspendable
-                    sigOpCountError = true;
-                    return 0;
-                }
-                else
-                {
-                    //  When trying to spend such output EvalScript requires minimal encoding
-                    //  and would fail the script if number is not minimally encoded
-                    //  We check minimal encoding before calling CScriptNum to avoid
-                    //  exception in CScriptNum constructor.
-                    if (!bsv::IsMinimallyEncoded(lastVch, CScriptNum::MAXIMUM_ELEMENT_SIZE))
-                    {
-                        sigOpCountError = true;
-                        return 0;
-                    }
-
-                    int numSigs = CScriptNum(lastVch, true).getint();
-                    if (numSigs <0)
-                    {
-                        sigOpCountError = true;
-                        return 0;
-                    }
-                    n += numSigs;
-                }
-            }
             else
-            {
-                n += MAX_PUBKEYS_PER_MULTISIG_BEFORE_GENESIS;
-            }
+                n += MAX_PUBKEYS_PER_MULTISIG;
         }
         lastOpcode = opcode;
-        // Swap is used here to avoid memory copying
-        lastVch.swap(vch);
     }
-
     return n;
 }
 
-uint64_t CScript::GetSigOpCount(const CScript &scriptSig, bool isGenesisEnabled, bool& sigOpCountError) const 
-{
-    sigOpCountError = false;
-    if (!IsPayToScriptHash())
-    {
-        return GetSigOpCount(true, isGenesisEnabled, sigOpCountError);
-    }
+unsigned int CScript::GetSigOpCount(const CScript &scriptSig) const {
+    if (!IsPayToScriptHash()) return GetSigOpCount(true);
 
     // This is a pay-to-script-hash scriptPubKey;
     // get the last item that the scriptSig
     // pushes onto the stack:
     const_iterator pc = scriptSig.begin();
     std::vector<uint8_t> data;
-    while (pc < scriptSig.end()) 
-    {
+    while (pc < scriptSig.end()) {
         opcodetype opcode;
         if (!scriptSig.GetOp(pc, opcode, data)) return 0;
         if (opcode > OP_16) return 0;
     }
 
-    if (isGenesisEnabled)
-    {
-        // After Genesis P2SH is not supported and redeem script is not executed, so we return 0
-        return 0;
-    }
-    else
-    {
-        /// ... and return its opcount:
-        CScript subscript(data.begin(), data.end());
-        return subscript.GetSigOpCount(true, isGenesisEnabled, sigOpCountError);
-    }
+    /// ... and return its opcount:
+    CScript subscript(data.begin(), data.end());
+    return subscript.GetSigOpCount(true);
 }
 
 bool CScript::IsPayToScriptHash() const {
@@ -453,12 +387,7 @@ std::string CScriptWitness::ToString() const {
 std::ostream& operator<<(std::ostream& os, const CScript& script)
 {
     for(const auto opcode : script)
-    {
-        if (opcode > OP_0 && opcode < OP_PUSHDATA1)
-            os << static_cast<int>(opcode) << ' ';
-        else
-            os << static_cast<opcodetype>(opcode) << ' ';
-    }
+        os << static_cast<opcodetype>(opcode) << ' ';
     return os;
 }
 

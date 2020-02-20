@@ -258,9 +258,6 @@ static UniValue stop(const Config &config, const JSONRPCRequest &jsonRequest) {
     if (jsonRequest.fHelp || jsonRequest.params.size() > 1)
         throw std::runtime_error("stop\n"
                                  "\nStop Bitcoin server.");
-
-    LogPrintf("Received RPC call stop()\n");
-
     // Event loop will exit after current HTTP requests have been handled, so
     // this reply will get back to the client.
     StartShutdown();
@@ -406,8 +403,14 @@ static void JSONRPCExecOne(Config &config, JSONRPCRequest jreq,
 
     try {
         jreq.parse(req);
-        // Support response to be written in multiple chunks
-        tableRPC.execute(config, jreq, &httpReq, true);
+        if (jreq.strMethod == "getblock") {
+            // getblock response is written in multiple chunks
+            getblock(config, jreq, &httpReq, true);
+        } else {
+            UniValue result = tableRPC.execute(config, jreq);
+            // Response for each RPC method is written as a single chunk.
+            httpReq.WriteReplyChunk(JSONRPCReplyObj(result, NullUniValue, jreq.id).write());
+        }
     } catch (const UniValue &objError) {
         httpReq.WriteReplyChunk(JSONRPCReplyObj(NullUniValue, objError, jreq.id).write());
     } catch (const std::exception &e) {
@@ -485,37 +488,8 @@ transformNamedArguments(const JSONRPCRequest &in,
     return out;
 }
 
-UniValue CRPCCommand::call(Config &config, const JSONRPCRequest &jsonRequest, HTTPRequest *httpReq, bool processedInBatch) const
-{
-    UniValue result;
-    if (useHTTPRequest)
-    {
-        (*actor.http_fn)(config, jsonRequest, *httpReq, processedInBatch);
-        result = NullUniValue;
-    }
-    else
-    {
-        result = useConstConfig ? (*actor.cfn)(config, jsonRequest)
-                                : (*actor.fn)(config, jsonRequest);
-        if (httpReq && processedInBatch)
-        {
-            // Response for this RPC method is written as a single chunk
-            httpReq->WriteReplyChunk(JSONRPCReplyObj(result, NullUniValue, jsonRequest.id).write());
-        }
-        else if (httpReq)
-        {
-            std::string strReply = JSONRPCReply(result, NullUniValue, jsonRequest.id);
-            httpReq->WriteHeader("Content-Type", "application/json");
-            httpReq->WriteReply(HTTP_OK, strReply);
-        }
-    }
-    return result;
-}
-
-void CRPCTable::execute(Config &config,
-                            const JSONRPCRequest &request,
-                            HTTPRequest *httpReq,
-                            bool processedInBatch) const {
+UniValue CRPCTable::execute(Config &config,
+                            const JSONRPCRequest &request) const {
     // Return immediately if in warmup
     {
         LOCK(cs_rpcWarmup);
@@ -531,12 +505,10 @@ void CRPCTable::execute(Config &config,
     try {
         // Execute, convert arguments to array if necessary
         if (request.params.isObject()) {
-            pcmd->call(config,
-                       transformNamedArguments(request, pcmd->argNames),
-                       httpReq,
-                       processedInBatch);
+            return pcmd->call(config,
+                              transformNamedArguments(request, pcmd->argNames));
         } else {
-            pcmd->call(config, request, httpReq, processedInBatch);
+            return pcmd->call(config, request);
         }
     } catch (const std::exception &e) {
         throw JSONRPCError(RPC_MISC_ERROR, e.what());

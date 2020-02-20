@@ -84,19 +84,16 @@ BOOST_AUTO_TEST_CASE(manythreads) {
     // queue
     boost::thread_group microThreads;
     for (int i = 0; i < 5; i++)
-    {
-        microTasks.startServiceThread(microThreads);
-    }
+        microThreads.create_thread(
+            boost::bind(&CScheduler::serviceQueue, &microTasks));
 
     MicroSleep(600);
     now = boost::chrono::system_clock::now();
 
     // More threads and more tasks:
     for (int i = 0; i < 5; i++)
-    {
-        microTasks.startServiceThread(microThreads);
-    }
-
+        microThreads.create_thread(
+            boost::bind(&CScheduler::serviceQueue, &microTasks));
     for (int i = 0; i < 100; i++) {
         boost::chrono::system_clock::time_point t =
             now + boost::chrono::microseconds(randomMsec(rng));

@@ -23,7 +23,6 @@
 #include "script/script_error.h"
 #include "script/sign.h"
 #include "script/standard.h"
-#include "taskcancellation.h"
 #include "txmempool.h"
 #include "txn_validator.h"
 #include "uint256.h"
@@ -40,14 +39,37 @@
 
 using namespace mining;
 
-void getrawtransaction(const Config& config,
-                       const JSONRPCRequest& request,
-                       HTTPRequest& httpReq,
-                       bool processedInBatch)
+void TxToJSON(const CTransaction& tx, const uint256 hashBlock, UniValue& entry)
 {
+    // Call into TxToUniv() in bitcoin-common to decode the transaction hex.
+    //
+    // Blockchain contextual information (confirmations and blocktime) is not
+    // available to code in bitcoin-common, so we query them here and push the
+    // data into the returned UniValue.
+    TxToUniv(tx, uint256(), entry);
+
+    if (!hashBlock.IsNull()) {
+        entry.push_back(Pair("blockhash", hashBlock.GetHex()));
+        BlockMap::iterator mi = mapBlockIndex.find(hashBlock);
+        if (mi != mapBlockIndex.end() && (*mi).second) {
+            CBlockIndex *pindex = (*mi).second;
+            if (chainActive.Contains(pindex)) {
+                entry.push_back(
+                    Pair("confirmations",
+                         1 + chainActive.Height() - pindex->nHeight));
+                entry.push_back(Pair("time", pindex->GetBlockTime()));
+                entry.push_back(Pair("blocktime", pindex->GetBlockTime()));
+            } else {
+                entry.push_back(Pair("confirmations", 0));
+            }
+        }
+    }
+}
+
+static UniValue getrawtransaction(const Config &config,
+                                  const JSONRPCRequest &request) {
     if (request.fHelp || request.params.size() < 1 ||
-        request.params.size() > 2) 
-    {
+        request.params.size() > 2) {
         throw std::runtime_error(
             "getrawtransaction \"txid\" ( verbose )\n"
 
@@ -120,9 +142,8 @@ void getrawtransaction(const Config& config,
             "  \"confirmations\" : n,      (numeric) The confirmations\n"
             "  \"time\" : ttt,             (numeric) The transaction time in "
             "seconds since epoch (Jan 1 1970 GMT)\n"
-            "  \"blocktime\" : ttt,        (numeric) The block time in seconds "
+            "  \"blocktime\" : ttt         (numeric) The block time in seconds "
             "since epoch (Jan 1 1970 GMT)\n"
-            "  \"blockheight\" : n         (numeric) The block height\n"
             "}\n"
 
             "\nExamples:\n" +
@@ -131,46 +152,22 @@ void getrawtransaction(const Config& config,
             HelpExampleRpc("getrawtransaction", "\"mytxid\", true"));
     }
 
-    CHttpTextWriter httpWriter(httpReq);
-    getrawtransaction(config, request, httpWriter, processedInBatch, [&httpReq] {httpReq.WriteHeader("Content-Type", "application/json");  httpReq.StartWritingChunks(HTTP_OK); });
-    httpWriter.Flush();
-    if (!processedInBatch)
-    {
-        httpReq.StopWritingChunks();
-    }
-}
-
-void getrawtransaction(const Config& config,
-                       const JSONRPCRequest& request,
-                       CTextWriter& textWriter,
-                       bool processedInBatch,
-                       std::function<void()> httpCallback) 
-{
-    
     LOCK(cs_main);
 
     TxId txid = TxId(ParseHashV(request.params[0], "parameter 1"));
 
     // Accept either a bool (true) or a num (>=1) to indicate verbose output.
     bool fVerbose = false;
-    if (request.params.size() > 1) 
-    {
-        if (request.params[1].isNum()) 
-        {
-            if (request.params[1].get_int() != 0) 
-            {
+    if (request.params.size() > 1) {
+        if (request.params[1].isNum()) {
+            if (request.params[1].get_int() != 0) {
                 fVerbose = true;
             }
-        } 
-        else if (request.params[1].isBool()) 
-        {
-            if (request.params[1].isTrue()) 
-            {
+        } else if (request.params[1].isBool()) {
+            if (request.params[1].isTrue()) {
                 fVerbose = true;
             }
-        } 
-        else 
-        {
+        } else {
             throw JSONRPCError(
                 RPC_TYPE_ERROR,
                 "Invalid type provided. Verbose parameter must be a boolean.");
@@ -179,9 +176,7 @@ void getrawtransaction(const Config& config,
 
     CTransactionRef tx;
     uint256 hashBlock;
-    bool isGenesisEnabled;
-    if (!GetTransaction(config, txid, tx, true, hashBlock, isGenesisEnabled)) 
-    {
+    if (!GetTransaction(config, txid, tx, hashBlock, true)) {
         throw JSONRPCError(
             RPC_INVALID_ADDRESS_OR_KEY,
             std::string(fTxIndex ? "No such mempool or blockchain transaction"
@@ -190,56 +185,16 @@ void getrawtransaction(const Config& config,
                 ". Use gettransaction for wallet transactions.");
     }
 
-    if (!processedInBatch) 
-    {
-        httpCallback();
+    std::string strHex = EncodeHexTx(*tx, RPCSerializationFlags());
+
+    if (!fVerbose) {
+        return strHex;
     }
 
-    if (!fVerbose) 
-    {
-        textWriter.Write("{\"result\": \"");
-        EncodeHexTx(*tx, textWriter, RPCSerializationFlags());
-        textWriter.Write("\", \"error\": " + NullUniValue.write() + ", \"id\": " + request.id.write() + "}");
-        return;
-    }
-
-    textWriter.Write("{\"result\": ");
-
-    CJSONWriter jWriter(textWriter, false);
-
-    // Call into TxToJSON() in bitcoin-common to decode the transaction hex.
-    //
-    // Blockchain contextual information (confirmations and blocktime) is not
-    // available to code in bitcoin-common, so we query them here and push the
-    // data as JSON.
-
-    if (!hashBlock.IsNull())
-    {
-        CBlockDetailsData blockData;
-        auto mi = mapBlockIndex.find(hashBlock);
-        if (mi != mapBlockIndex.end() && mi->second) 
-        {
-            const CBlockIndex* pindex = mi->second;
-            if (chainActive.Contains(pindex)) 
-            {
-                blockData.confirmations = 1 + chainActive.Height() - pindex->nHeight;
-                blockData.time = pindex->GetBlockTime();
-                blockData.blockTime = pindex->GetBlockTime();
-                blockData.blockHeight = pindex->nHeight;
-            }
-            else 
-            {
-                blockData.confirmations = 0;
-            }
-        }
-        TxToJSON(*tx, hashBlock, isGenesisEnabled, RPCSerializationFlags(), jWriter, blockData);
-    } 
-    else 
-    {
-        TxToJSON(*tx, uint256(), isGenesisEnabled, RPCSerializationFlags(), jWriter);
-    }
-
-    textWriter.Write(", \"error\": " + NullUniValue.write() + ", \"id\": " + request.id.write() + "}");
+    UniValue result(UniValue::VOBJ);
+    result.push_back(Pair("hex", strHex));
+    TxToJSON(*tx, hashBlock, result);
+    return result;
 }
 
 static UniValue gettxoutproof(const Config &config,
@@ -317,8 +272,7 @@ static UniValue gettxoutproof(const Config &config,
 
     if (pblockindex == nullptr) {
         CTransactionRef tx;
-        bool isGenesisEnabledDummy; // not used
-        if (!GetTransaction(config, oneTxId, tx, false, hashBlock, isGenesisEnabledDummy) ||
+        if (!GetTransaction(config, oneTxId, tx, hashBlock, false) ||
             hashBlock.IsNull()) {
             throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY,
                                "Transaction not yet in block");
@@ -561,13 +515,9 @@ static UniValue createrawtransaction(const Config &config,
     return EncodeHexTx(CTransaction(rawTx));
 }
 
-void decoderawtransaction(const Config& config,
-                          const JSONRPCRequest& request,
-                          HTTPRequest& httpReq,
-                          bool processedInBatch)
-{
-    if (request.fHelp || request.params.size() != 1) 
-    {
+static UniValue decoderawtransaction(const Config &config,
+                                     const JSONRPCRequest &request) {
+    if (request.fHelp || request.params.size() != 1) {
         throw std::runtime_error(
             "decoderawtransaction \"hexstring\"\n"
             "\nReturn a JSON object representing the serialized, hex-encoded "
@@ -625,45 +575,19 @@ void decoderawtransaction(const Config& config,
             HelpExampleRpc("decoderawtransaction", "\"hexstring\""));
     }
 
-    CHttpTextWriter httpWriter(httpReq);
-    decoderawtransaction(config, request, httpWriter, processedInBatch, [&httpReq] {httpReq.WriteHeader("Content-Type", "application/json");  httpReq.StartWritingChunks(HTTP_OK);});
-    httpWriter.Flush();
-    if (!processedInBatch)
-    {
-        httpReq.StopWritingChunks();
-    }
-}
-
-void decoderawtransaction(const Config& config,
-                          const JSONRPCRequest& request,
-                          CTextWriter& textWriter, 
-                          bool processedInBatch,
-                          std::function<void()> httpCallback) 
-{
-
     LOCK(cs_main);
     RPCTypeCheck(request.params, {UniValue::VSTR});
 
     CMutableTransaction mtx;
 
-    if (!DecodeHexTx(mtx, request.params[0].get_str())) 
-    {
+    if (!DecodeHexTx(mtx, request.params[0].get_str())) {
         throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "TX decode failed");
     }
-    
-    if (!processedInBatch)
-    {
-        httpCallback();
-    }
-    textWriter.Write("{\"result\": ");
 
-    CTransaction tx(std::move(mtx));
-    //treat as after genesis if no output is P2SH
-    bool genesisEnabled = std::none_of(mtx.vout.begin(), mtx.vout.end(), [](const CTxOut& out) { return out.scriptPubKey.IsPayToScriptHash(); });
-    CJSONWriter jWriter(textWriter, false);
-    TxToJSON(tx, uint256(), genesisEnabled, 0, jWriter);
-    
-    textWriter.Write(", \"error\": " + NullUniValue.write() + ", \"id\": " + request.id.write() + "}");
+    UniValue result(UniValue::VOBJ);
+    TxToUniv(CTransaction(std::move(mtx)), uint256(), result);
+
+    return result;
 }
 
 static UniValue decodescript(const Config &config,
@@ -705,10 +629,7 @@ static UniValue decodescript(const Config &config,
         // Empty scripts are valid.
     }
 
-    ScriptPubKeyToUniv(script,
-        true, 
-        script.IsPayToScriptHash() ? false : true,  // treat all transactions as post-Genesis, except P2SH 
-        r);
+    ScriptPubKeyToUniv(script, r, false);
 
     UniValue type;
     type = find_value(r, "type");
@@ -979,18 +900,7 @@ static UniValue signrawtransaction(const Config &config,
                     throw JSONRPCError(RPC_INVALID_PARAMETER, "Missing amount");
                 }
 
-                // We do not have coin height here. We assume that the coin is about to
-                // be mined using latest active rules.
-                const auto genesisActivationHeight = config.GetGenesisActivationHeight();
-                uint32_t coinHeight = static_cast<uint32_t>(chainActive.Height() + 1);
-
-                // except if we are trying to sign transactions that spends p2sh transaction, which
-                // are non-standard (and therefore cannot be signed) after genesis upgrade
-                if( coinHeight >= genesisActivationHeight && txout.scriptPubKey.IsPayToScriptHash()){
-                    coinHeight = genesisActivationHeight - 1;
-                }
-
-                view.AddCoin(out, Coin(txout, coinHeight, false), true, genesisActivationHeight);
+                view.AddCoin(out, Coin(txout, 1, false), true);
             }
 
             // If redeemScript given and not using the local wallet (private
@@ -1059,9 +969,6 @@ static UniValue signrawtransaction(const Config &config,
     // Use CTransaction for the constant parts of the transaction to avoid
     // rehashing.
     const CTransaction txConst(mergedTx);
-
-    bool genesisEnabled = IsGenesisEnabled(config, chainActive.Height() + 1);
-
     // Sign what we can:
     for (size_t i = 0; i < mergedTx.vin.size(); i++) {
         CTxIn &txin = mergedTx.vin[i];
@@ -1074,46 +981,31 @@ static UniValue signrawtransaction(const Config &config,
         const CScript &prevPubKey = coin.GetTxOut().scriptPubKey;
         const Amount amount = coin.GetTxOut().nValue;
 
-        bool utxoAfterGenesis = IsGenesisEnabled(config, coin, chainActive.Height() + 1); 
-
         SignatureData sigdata;
         // Only sign SIGHASH_SINGLE if there's a corresponding output:
         if ((sigHashType.getBaseType() != BaseSigHashType::SINGLE) ||
             (i < mergedTx.vout.size())) {
-            ProduceSignature(config, true, MutableTransactionSignatureCreator(
+            ProduceSignature(MutableTransactionSignatureCreator(
                                  &keystore, &mergedTx, i, amount, sigHashType),
-                             genesisEnabled, utxoAfterGenesis, prevPubKey, sigdata);
+                             prevPubKey, sigdata);
         }
 
         // ... and merge in other signatures:
         for (const CMutableTransaction &txv : txVariants) {
             if (txv.vin.size() > i) {
                 sigdata = CombineSignatures(
-                    config, 
-                    true,
                     prevPubKey,
                     TransactionSignatureChecker(&txConst, i, amount), sigdata,
-                    DataFromTransaction(txv, i),
-                    utxoAfterGenesis);
+                    DataFromTransaction(txv, i));
             }
         }
 
         UpdateTransaction(mergedTx, i, sigdata);
 
         ScriptError serror = SCRIPT_ERR_OK;
-        auto source = task::CCancellationSource::Make();
-        auto res =
-            VerifyScript(
-                config,
-                true,
-                source->GetToken(),
-                txin.scriptSig,
-                prevPubKey,
-                StandardScriptVerifyFlags(genesisEnabled, utxoAfterGenesis),
-                TransactionSignatureChecker(&txConst, i, amount),
-                &serror);
-        if (!res.value())
-        {
+        if (!VerifyScript(
+                txin.scriptSig, prevPubKey, STANDARD_SCRIPT_VERIFY_FLAGS,
+                TransactionSignatureChecker(&txConst, i, amount), &serror)) {
             TxInErrorToJSON(txin, vErrors, ScriptErrorString(serror));
         }
     }
@@ -1133,7 +1025,7 @@ static UniValue signrawtransaction(const Config &config,
 static UniValue sendrawtransaction(const Config &config,
                                    const JSONRPCRequest &request) {
     if (request.fHelp || request.params.size() < 1 ||
-        request.params.size() > 3) {
+        request.params.size() > 2) {
         throw std::runtime_error(
             "sendrawtransaction \"hexstring\" ( allowhighfees )\n"
             "\nSubmits raw transaction (serialized, hex-encoded) to local node "
@@ -1144,7 +1036,6 @@ static UniValue sendrawtransaction(const Config &config,
             "transaction)\n"
             "2. allowhighfees    (boolean, optional, default=false) Allow high "
             "fees\n"
-            "3. dontcheckfee     (boolean, optional, default=false) Don't check fee\n"
             "\nResult:\n"
             "\"hex\"             (string) The transaction hash in hex\n"
             "\nExamples:\n"
@@ -1160,8 +1051,7 @@ static UniValue sendrawtransaction(const Config &config,
             "\nAs a json rpc call\n" +
             HelpExampleRpc("sendrawtransaction", "\"signedhex\""));
     }
-    RPCTypeCheck(request.params,
-                 {UniValue::VSTR, UniValue::VBOOL, UniValue::VBOOL});
+    RPCTypeCheck(request.params, {UniValue::VSTR, UniValue::VBOOL});
     // parse hex string from parameter
     CMutableTransaction mtx;
     if (!DecodeHexTx(mtx, request.params[0].get_str())) {
@@ -1175,21 +1065,13 @@ static UniValue sendrawtransaction(const Config &config,
     if (request.params.size() > 1 && request.params[1].get_bool()) {
         nMaxRawTxFee = Amount(0);
     }
-    bool dontCheckFee = false;
-    if (request.params.size() > 2 && request.params[2].get_bool()) {
-        dontCheckFee = true;
-    }
 
     if (!g_connman) {
         throw JSONRPCError(
             RPC_CLIENT_P2P_DISABLED,
             "Error: Peer-to-peer functionality missing or disabled");
     }
-    if (!mempool.Exists(txid) && !mempool.getNonFinalPool().exists(txid)) {
-        if (dontCheckFee) {
-            mempool.PrioritiseTransaction(tx->GetId(), tx->GetId().ToString(),
-                                          0.0, MAX_MONEY);
-        }
+    if (!mempool.Exists(txid)) {
         // Mempool Journal ChangeSet
         CJournalChangeSetPtr changeSet {
             mempool.getJournalBuilder()->getNewChangeSet(JournalUpdateReason::NEW_TXN)
@@ -1204,7 +1086,6 @@ static UniValue sendrawtransaction(const Config &config,
             txValidator->processValidation(
                             std::make_shared<CTxInputData>(
                                                 TxSource::rpc, // tx source
-                                                TxValidationPriority::normal, // tx validation priority
                                                 std::move(tx), // a pointer to the tx
                                                 GetTime(),     // nAcceptTime
                                                 false,         // fLimitFree
@@ -1215,11 +1096,8 @@ static UniValue sendrawtransaction(const Config &config,
         // Check if the transaction was accepted by the mempool.
         // Due to potential race-condition we have to explicitly call exists() instead of
         // checking a result from the status variable.
-        if (!mempool.Exists(txid) && !mempool.getNonFinalPool().exists(txid)) {
+        if (!mempool.Exists(txid)) {
             if (!status.IsValid()) {
-                if (dontCheckFee) {
-                    mempool.clearPrioritisation(txid);
-                }
                 if (status.IsMissingInputs()) {
                         throw JSONRPCError(RPC_TRANSACTION_ERROR, "Missing inputs");
                 } else if (status.IsInvalid()) {
@@ -1240,18 +1118,8 @@ static UniValue sendrawtransaction(const Config &config,
         throw JSONRPCError(RPC_TRANSACTION_ALREADY_IN_CHAIN,
                            "Transaction already in the mempool");
     }
-
     CInv inv(MSG_TX, txid);
-    TxMempoolInfo txinfo {};
-    if(mempool.Exists(txid))
-    {
-        txinfo = mempool.Info(txid);
-    }
-    else if(mempool.getNonFinalPool().exists(txid))
-    {
-        txinfo = mempool.getNonFinalPool().getInfo(txid);
-    }
-
+    TxMempoolInfo txinfo { mempool.Info(txid) };
     // It is possible that we relay txn which was added and removed from the mempool, because:
     // - block was mined
     // - the Validator's asynch mode removed the txn (and triggered reject msg)
@@ -1271,7 +1139,7 @@ static const CRPCCommand commands[] = {
     { "rawtransactions",    "createrawtransaction",   createrawtransaction,   true,  {"inputs","outputs","locktime"} },
     { "rawtransactions",    "decoderawtransaction",   decoderawtransaction,   true,  {"hexstring"} },
     { "rawtransactions",    "decodescript",           decodescript,           true,  {"hexstring"} },
-    { "rawtransactions",    "sendrawtransaction",     sendrawtransaction,     false, {"hexstring","allowhighfees","dontcheckfee"} },
+    { "rawtransactions",    "sendrawtransaction",     sendrawtransaction,     false, {"hexstring","allowhighfees"} },
     { "rawtransactions",    "signrawtransaction",     signrawtransaction,     false, {"hexstring","prevtxs","privkeys","sighashtype"} }, /* uses wallet if enabled */
 
     { "blockchain",         "gettxoutproof",          gettxoutproof,          true,  {"txids", "blockhash"} },

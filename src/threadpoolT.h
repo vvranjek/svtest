@@ -13,24 +13,7 @@ CThreadPool<QueueAdaptor>::CThreadPool(const std::string& owner, size_t numThrea
     mThreads.reserve(numThreads);
     for(size_t i = 0; i < numThreads; ++i)
     {
-        mThreads.
-            emplace_back(
-                    std::make_shared<std::thread>(&CThreadPool::worker, this, i, ThreadPriority::Normal));
-    }
-}
-
-template<typename QueueAdaptor>
-CThreadPool<QueueAdaptor>::CThreadPool(const std::string& owner, size_t numHighPriorityThrs, size_t numLowPriorityThrs)
-: mOwnerStr{owner}
-{
-    // Launch our workers
-    mThreads.reserve(numHighPriorityThrs + numLowPriorityThrs);
-    for(size_t i = 0; i < numHighPriorityThrs + numLowPriorityThrs; ++i)
-    {
-        mThreads.
-            emplace_back(
-                std::make_shared<std::thread>(
-                    &CThreadPool::worker, this, i, i < numHighPriorityThrs ? ThreadPriority::High : ThreadPriority::Low));
+        mThreads.emplace_back(std::make_shared<std::thread>(&CThreadPool::worker, this, i));
     }
 }
 
@@ -55,11 +38,12 @@ CThreadPool<QueueAdaptor>::~CThreadPool()
 
 // The worker threads
 template<typename QueueAdaptor>
-void CThreadPool<QueueAdaptor>::worker(size_t n, ThreadPriority thrPriority)
+void CThreadPool<QueueAdaptor>::worker(size_t n)
 {
-    std::string s = strprintf("bitcoin-worker%d-%s-%s", n, enum_cast<std::string>(thrPriority), mOwnerStr.c_str());
+    std::string s = strprintf("bitcoin-worker%d-%s", n, mOwnerStr.c_str());
     RenameThread(s.c_str());
     LogPrintf("%s ThreadPool thread %d starting\n", mOwnerStr.c_str(), n);
+
     while(mRunning)
     {
         CTask task {};
@@ -75,7 +59,7 @@ void CThreadPool<QueueAdaptor>::worker(size_t n, ThreadPriority thrPriority)
                 break;
 
             // Pop next task
-            task = std::move(mQueue.pop(thrPriority));
+            task = std::move(mQueue.pop());
         }
 
         // Run task

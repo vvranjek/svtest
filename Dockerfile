@@ -1,32 +1,39 @@
 #Dockerfile for building Bitcoin SV
-FROM ubuntu:cosmic
+FROM centos:latest
 LABEL maintainer=p.foster@nchain.com
-RUN apt-get update &&   \
-    apt-get -y install  \
-       libboost-all-dev \
-       libdb-dev        \
-       libdb++-dev      \
-       build-essential  \
+RUN yum update -y && yum install -y dnf-plugins-core && dnf update -y 
+RUN dnf config-manager -y --set-enabled PowerTools
+RUN dnf update -y && dnf install     -y  \
+       which            \
+       autoconf         \
+       boost-devel      \
+       gcc-c++          \
+       libdb-devel      \
+       libdb-cxx-devel  \  
+       libdb-cxx        \
+       make             \
        libtool          \
-       autotools-dev    \
        automake         \
-       pkg-config       \
-       libssl-dev       \
-       libevent-dev     \
-       libminiupnpc-dev \
-       libzmq3-dev      \
+       pkgconfig        \
+       openssl-devel    \
+       libevent-devel   \
+       gupnp            \
        git              \
-       python3          \
        perl             \
-       cpanminus        \
-       bsdmainutils     \
-       libcrypto++-dev
-    
-RUN cpanm install PerlIO::gzip
-RUN cpanm install JSON
-RUN git clone https://github.com/linux-test-project/lcov.git && cd lcov && make install
+       gzip             \
+       zlib-devel       \
+       perl-App-cpanminus \
+       wget             \
+       bzip2-devel      \
+       python3 python3-libs python3-devel python3-pip 
+       
+
+RUN cpanm Test::More && cpanm PerlIO::gzip && cpanm JSON
+
+
 COPY ./entrypoint.py .
 RUN  chmod +x /entrypoint.py
 RUN  useradd -G users jenkins
 USER jenkins
+
 

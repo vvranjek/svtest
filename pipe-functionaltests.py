@@ -9,15 +9,12 @@ import pipetestutils
 def main():
     r1 = -1
 
-     
-    my_env = os.environ.copy()
-    my_env["LD_LIBRARY_PATH"] = "/usr/local/lib:" + my_env["LD_LIBRARY_PATH"]
-
+  
     try:
         args = ["python3", "test/functional/test_runner.py" \
                 , "--extended" \
-                , "--junitouput=build/reports/func-tests.xml"]
-        r1 = subprocess.call(args, env=my_env)
+                , "--junitouput=build/reports/func-tests.xml", "--jobs=1"]
+        r1 = subprocess.call(args)
     except Exception as e:
         print("Problem running tests")
         print("type error: " + str(e))

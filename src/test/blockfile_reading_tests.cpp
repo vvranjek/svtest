@@ -29,10 +29,9 @@ namespace
         CBlockIndex& index,
         CBlockFileInfoStore& blockFileInfoStore)
     {
-        uint64_t nBlockSize = ::GetSerializeSize(block, SER_DISK, CLIENT_VERSION);
-        uint64_t nBlockSizeWithHeader =
-            nBlockSize
-            + GetBlockFileBlockHeaderSize(nBlockSize);
+        unsigned int nBlockSizeWithHeader =
+            ::GetSerializeSize(block, SER_DISK, CLIENT_VERSION)
+            + BLOCKFILE_BLOCK_HEADER_SIZE;
         CDiskBlockPos blockPos;
         CValidationState state;
         bool fCheckForPruning = false;
@@ -128,8 +127,6 @@ BOOST_AUTO_TEST_CASE(read_without_meta_info)
 
     std::vector<uint8_t> expectedSerializedData{Serialize(block)};
 
-    LOCK(cs_main);
-
     // check that blockIndex was updated with disk content size and hash data
     {
         auto stream = StreamBlockFromDisk(index, INIT_PROTO_VERSION);
@@ -185,7 +182,6 @@ BOOST_AUTO_TEST_CASE(delete_block_file_while_reading)
 
     std::vector<uint8_t> expectedSerializedData{Serialize(block)};
 
-    LOCK(cs_main);
     auto stream = StreamBlockFromDisk(index, INIT_PROTO_VERSION);
     std::vector<uint8_t> serializedData;
 

@@ -7,7 +7,7 @@ pipeline {
     triggers {
         bitBucketTrigger([[$class: 'BitBucketPPRRepositoryTriggerFilter'
                    , actionFilter: [$class: 'BitBucketPPRRepositoryPushActionFilter'
-                   , allowedBranches: ''
+                   , allowedBranches: 'Centos8'
                    , triggerAlsoIfTagPush: false]]
                    , [$class: 'BitBucketPPRPullRequestTriggerFilter'
                    , actionFilter: [$class: 'BitBucketPPRPullRequestApprovedActionFilter'
@@ -60,13 +60,6 @@ pipeline {
                 sh 'python3 pipe-functionaltests.py'
             }
         }
-        stage('Code Coverage') {
-            steps {
-                bitbucketStatusNotify(buildState: 'CODE COVERAGE')
-                sh 'python3 pipe-codecoverage.py'
-            }
-        }
-
     }
     post {
         cleanup { script:  cleanWs() }

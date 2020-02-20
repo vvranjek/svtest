@@ -37,23 +37,11 @@ BOOST_AUTO_TEST_CASE(DoS_banning) {
     const Config &config = GlobalConfig::GetConfig();
     std::atomic<bool> interruptDummy(false);
 
-    CConnman::CAsyncTaskPool asyncTaskPool{config};
     connman->ClearBanned();
     CAddress addr1(ip(0xa0b0c001), NODE_NONE);
-    CNodePtr dummyNode1 =
-        CNode::Make(
-            id++,
-            NODE_NETWORK,
-            0,
-            INVALID_SOCKET,
-            addr1,
-            0u,
-            0u,
-            asyncTaskPool,
-            "",
-            true);
+    CNodePtr dummyNode1 { std::make_shared<CNode>(id++, NODE_NETWORK, 0, INVALID_SOCKET, addr1, 0, 0, "", true) };
     dummyNode1->SetSendVersion(PROTOCOL_VERSION);
-    GetNodeSignals().InitializeNode(dummyNode1, *connman);
+    GetNodeSignals().InitializeNode(config, dummyNode1, *connman);
     dummyNode1->nVersion = 1;
     dummyNode1->fSuccessfullyConnected = true;
     // Should get banned.
@@ -64,20 +52,9 @@ BOOST_AUTO_TEST_CASE(DoS_banning) {
     BOOST_CHECK(!connman->IsBanned(ip(0xa0b0c001 | 0x0000ff00)));
 
     CAddress addr2(ip(0xa0b0c002), NODE_NONE);
-    CNodePtr dummyNode2 =
-        CNode::Make(
-            id++,
-            NODE_NETWORK,
-            0,
-            INVALID_SOCKET,
-            addr2,
-            1u,
-            1u,
-            asyncTaskPool,
-            "",
-            true);
+    CNodePtr dummyNode2 { std::make_shared<CNode>(id++, NODE_NETWORK, 0, INVALID_SOCKET, addr2, 1, 1, "", true) };
     dummyNode2->SetSendVersion(PROTOCOL_VERSION);
-    GetNodeSignals().InitializeNode(dummyNode2, *connman);
+    GetNodeSignals().InitializeNode(config, dummyNode2, *connman);
     dummyNode2->nVersion = 1;
     dummyNode2->fSuccessfullyConnected = true;
     Misbehaving(dummyNode2->GetId(), 50, "");
@@ -95,25 +72,13 @@ BOOST_AUTO_TEST_CASE(DoS_banscore) {
     const Config &config = GlobalConfig::GetConfig();
     std::atomic<bool> interruptDummy(false);
 
-    CConnman::CAsyncTaskPool asyncTaskPool{config};
     connman->ClearBanned();
     // because 11 is my favorite number.
     gArgs.ForceSetArg("-banscore", "111");
     CAddress addr1(ip(0xa0b0c001), NODE_NONE);
-    CNodePtr dummyNode1 =
-        CNode::Make(
-            id++,
-            NODE_NETWORK,
-            0,
-            INVALID_SOCKET,
-            addr1,
-            3u,
-            1u,
-            asyncTaskPool,
-            "",
-            true);
+    CNodePtr dummyNode1 { std::make_shared<CNode>(id++, NODE_NETWORK, 0, INVALID_SOCKET, addr1, 3, 1, "", true) };
     dummyNode1->SetSendVersion(PROTOCOL_VERSION);
-    GetNodeSignals().InitializeNode(dummyNode1, *connman);
+    GetNodeSignals().InitializeNode(config, dummyNode1, *connman);
     dummyNode1->nVersion = 1;
     dummyNode1->fSuccessfullyConnected = true;
     Misbehaving(dummyNode1->GetId(), 100, "");
@@ -132,27 +97,15 @@ BOOST_AUTO_TEST_CASE(DoS_bantime) {
     const Config &config = GlobalConfig::GetConfig();
     std::atomic<bool> interruptDummy(false);
 
-    CConnman::CAsyncTaskPool asyncTaskPool{config};
     connman->ClearBanned();
     int64_t nStartTime = GetTime();
     // Overrides future calls to GetTime()
     SetMockTime(nStartTime);
 
     CAddress addr(ip(0xa0b0c001), NODE_NONE);
-    CNodePtr dummyNode =
-        CNode::Make(
-            id++,
-            NODE_NETWORK,
-            0,
-            INVALID_SOCKET,
-            addr,
-            4u,
-            4u,
-            asyncTaskPool,
-            "",
-            true);
+    CNodePtr dummyNode { std::make_shared<CNode>(id++, NODE_NETWORK, 0, INVALID_SOCKET, addr, 4, 4, "", true) };
     dummyNode->SetSendVersion(PROTOCOL_VERSION);
-    GetNodeSignals().InitializeNode(dummyNode, *connman);
+    GetNodeSignals().InitializeNode(config, dummyNode, *connman);
     dummyNode->nVersion = 1;
     dummyNode->fSuccessfullyConnected = true;
 
@@ -181,21 +134,12 @@ BOOST_AUTO_TEST_CASE(DoS_mapOrphans) {
             gArgs.GetArg("-blockreconstructionextratxn",
                       COrphanTxns::DEFAULT_BLOCK_RECONSTRUCTION_EXTRA_TXN))
     };
-    size_t maxTxSizePolicy {
-        static_cast<size_t>(
-            gArgs.GetArg("-maxtxsizepolicy",
-                      MAX_TX_SIZE_POLICY_BEFORE_GENESIS))
-    };
-
     // A common buffer with orphan txns
     std::shared_ptr<COrphanTxns> orphanTxns {
         std::make_shared<COrphanTxns>(
                             maxCollectedOutpoints,
-                            maxExtraTxnsForCompactBlock,
-                            maxTxSizePolicy)
+                            maxExtraTxnsForCompactBlock)
     };
-
-    CConnman::CAsyncTaskPool asyncTaskPool{GlobalConfig::GetConfig()};
 
     // 50 orphan transactions:
     for (NodeId i = 0; i < 50; i++) {
@@ -211,24 +155,13 @@ BOOST_AUTO_TEST_CASE(DoS_mapOrphans) {
         tx.vout[0].nValue = 1 * CENT;
         tx.vout[0].scriptPubKey =
             GetScriptForDestination(key.GetPubKey().GetID());
-
-        CNodePtr pNode =
-            CNode::Make(
-                i,
-                NODE_NETWORK,
-                0,
-                INVALID_SOCKET,
-                dummy_addr,
-                0u,
-                0u,
-                asyncTaskPool,
-                "",
-                true);
+        auto pNode {
+            std::make_shared<CNode>(i, NODE_NETWORK, 0, INVALID_SOCKET, dummy_addr, 0, 0, "", true)
+        };
         // Add txn input data to the queue
         orphanTxns->addTxn(
             std::make_shared<CTxInputData>(
                                 TxSource::p2p, // tx source
-                                TxValidationPriority::normal, // tx validation priority
                                 MakeTransactionRef(tx),  // a pointer to the tx
                                 GetTime(),     // nAcceptTime
                                 false,         // mfLimitFree
@@ -257,12 +190,11 @@ BOOST_AUTO_TEST_CASE(DoS_mapOrphans) {
         tx.vout[0].nValue = 1 * CENT;
         tx.vout[0].scriptPubKey =
             GetScriptForDestination(key.GetPubKey().GetID());
-        SignSignature(testConfig, keystore, false, false, *txPrev, tx, 0, SigHashType());
+        SignSignature(keystore, *txPrev, tx, 0, SigHashType());
         // Add txn input data to the queue
         orphanTxns->addTxn(
             std::make_shared<CTxInputData>(
                                 TxSource::p2p, // tx source
-                                TxValidationPriority::normal, // tx validation priority
                                 MakeTransactionRef(tx),  // a pointer to the tx
                                 GetTime(),     // nAcceptTime
                                 false,         // mfLimitFree
@@ -292,7 +224,7 @@ BOOST_AUTO_TEST_CASE(DoS_mapOrphans) {
         for (size_t j = 0; j < tx.vin.size(); j++) {
             tx.vin[j].prevout = COutPoint(txPrev->GetId(), j);
         }
-        SignSignature(testConfig, keystore, false, false, *txPrev, tx, 0, SigHashType());
+        SignSignature(keystore, *txPrev, tx, 0, SigHashType());
         // Re-use same signature for other inputs
         // (they don't have to be valid for this test)
         for (unsigned int j = 1; j < tx.vin.size(); j++)
@@ -301,7 +233,6 @@ BOOST_AUTO_TEST_CASE(DoS_mapOrphans) {
         auto pTxInputData {
             std::make_shared<CTxInputData>(
                                 TxSource::p2p, // tx source
-                                TxValidationPriority::normal, // tx validation priority
                                 MakeTransactionRef(tx),  // a pointer to the tx
                                 GetTime(),     // nAcceptTime
                                 false,         // mfLimitFree

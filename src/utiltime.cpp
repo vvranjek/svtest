@@ -9,16 +9,11 @@
 
 #include "utiltime.h"
 
-#include <atomic>
-
 #include <boost/date_time/posix_time/posix_time.hpp>
 #include <boost/thread.hpp>
 
 //!< For unit testing
-namespace
-{
-    std::atomic_int64_t nMockTime = 0;
-}
+static int64_t nMockTime = 0;
 
 int64_t GetTime() {
     if (nMockTime) return nMockTime;

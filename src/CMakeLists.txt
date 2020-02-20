@@ -79,11 +79,6 @@ if(MSVC)
 
 endif()
 
-# openssl library
-include(BrewHelper)
-find_brew_prefix(OPENSSL_ROOT_DIR openssl)
-find_package(OpenSSL REQUIRED)
-
 # libtool style configure
 add_subdirectory(config)
 
@@ -114,7 +109,6 @@ add_library(util
 	support/lockedpool.cpp
 	sync.cpp
 	threadinterrupt.cpp
-	threadpriority.cpp
 	uint256.cpp
 	util.cpp
 	utilmoneystr.cpp
@@ -163,7 +157,7 @@ endfunction(prepend)
 
 prepend(BOOST_LIBRARIES "Boost::" ${BOOST_PACKAGES_REQUIRED})
 
-find_package(Boost 1.59 REQUIRED ${BOOST_PACKAGES_REQUIRED})
+find_package(Boost 1.58 REQUIRED ${BOOST_PACKAGES_REQUIRED})
 target_link_libraries(util univalue crypto ${BOOST_LIBRARIES})
 
 # Make sure boost uses std::atomic (it doesn't before 1.63)
@@ -188,7 +182,6 @@ add_library(common
 	netbase.cpp
 	primitives/block.cpp
 	protocol.cpp
-	rpc/jsonwriter.cpp
 	scheduler.cpp
 	script/sign.cpp
 	script/standard.cpp
@@ -206,7 +199,6 @@ add_library(bitcoinconsensus
 	pubkey.cpp
 	script/bitcoinconsensus.cpp
 	script/interpreter.cpp
-	script/limitedstack.cpp
 	script/script.cpp
 	script/script_num.cpp
 	script/script_error.cpp
@@ -215,10 +207,6 @@ add_library(bitcoinconsensus
 )
 
 target_link_libraries(bitcoinconsensus common)
-target_include_directories(bitcoinconsensus
-	PRIVATE
-		${OPENSSL_INCLUDE_DIR}
-)
 
 # Bitcoin server facilities
 add_library(server
@@ -263,11 +251,9 @@ add_library(server
 	script/sigcache.cpp
 	script/ismine.cpp
 	timedata.cpp
-    time_locked_mempool.cpp
 	torcontrol.cpp
 	txdb.cpp
 	txmempool.cpp
-    tx_mempool_info.cpp
 	txn_double_spend_detector.cpp
 	txn_propagator.cpp
 	txn_validation_data.cpp

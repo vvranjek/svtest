@@ -57,22 +57,7 @@ NON_SCRIPTS = [
     "combine_logs.py",
     "create_cache.py",
     "test_runner.py",
-    "bsv_pbv_common.py"
 ]
-
-LARGE_BLOCK_TESTS = [
-    # Tests for block files larger than 4GB. 
-    # This tests take really long time to execute so they are excluded by default. 
-    # Use --large-block-tests command line parameter to run them.
-    "bsv-genesis-large-blockfile-io.py",    
-    "bsv-genesis-large-blockfile-reindex.py",
-    "bsv-genesis-large-blockfile-max-32-bit.py",
-    "bsv-large-blocks-txindex-data.py"
-]
-
-# This tests can be only run by explicitly specifying them on command line. 
-# This is usefull for tests that take really long time to execute.
-EXCLUDED_TESTS = LARGE_BLOCK_TESTS
 
 TEST_PARAMS = {
     # Some test can be run with additional parameters.
@@ -143,18 +128,14 @@ def main():
     parser.add_argument('--buildconfig', '-b',
                         default="", help="Optional name of directory that contains binary and is located inside build directory. Used on Windows where "
                         "the build directory can contain outputs for multiple configurations. Example: -b RelWithDebInfo.")
-    parser.add_argument('--watch', type=str,
-                        default=None, help="Showing specified file in the console and monitoring its changes, usefull "
-                                           "for live viewing of the log files. If it is of the form 'nodeX' where X is integer, "
-                                           "it will show bitcoind.log file of the specified node")
-    parser.add_argument('--large-block-tests', action='store_true', help="Runs large block file tests.")
+
     args, unknown_args = parser.parse_known_args()
 
     # Create a set to store arguments and create the passon string
     tests = set(arg for arg in unknown_args if arg[:2] != "--")
     passon_args = [arg for arg in unknown_args if arg[:2] == "--"]
     passon_args.append("--configfile=%s" % configfile)
-    
+
     # Set up logging
     logging_level = logging.INFO if args.quiet else logging.DEBUG
     logging.basicConfig(format='%(message)s', level=logging_level)
@@ -180,11 +161,6 @@ def main():
     # Build list of tests
     all_scripts = get_all_scripts_from_disk(tests_dir, NON_SCRIPTS)
 
-    # Check for large block tests parameter 
-    if args.large_block_tests:
-        tests = LARGE_BLOCK_TESTS
-        args.jobs = 1
-
     if tests:
         # Individual tests have been specified. Run specified tests that exist
         # in the all_scripts list. Accept the name with or without .py
@@ -200,11 +176,6 @@ def main():
         cutoff = EXTENDED_CUTOFF
         if args.extended:
             cutoff = sys.maxsize
-        # Exclude tests specified in EXCLUDED_TESTS. 
-        # This tests should be specified in command line to execute 
-        for exclude_test in EXCLUDED_TESTS:
-            if exclude_test in test_list:
-                test_list.remove(exclude_test)
 
     # Remove the test cases that the user has explicitly asked to exclude.
     if args.exclude:
@@ -244,10 +215,10 @@ def main():
                                    "cache"), ignore_errors=True)
 
     run_tests(test_list, build_dir, tests_dir, args.junitouput,
-              config["environment"]["EXEEXT"], tmpdir, args.jobs, args.coverage, passon_args, build_timings, args.buildconfig, args.watch)
+              config["environment"]["EXEEXT"], tmpdir, args.jobs, args.coverage, passon_args, build_timings, args.buildconfig)
 
 
-def run_tests(test_list, build_dir, tests_dir, junitouput, exeext, tmpdir, jobs=1, enable_coverage=False, args=[],  build_timings=None, buildconfig="", file_for_monitoring=None):
+def run_tests(test_list, build_dir, tests_dir, junitouput, exeext, tmpdir, jobs=1, enable_coverage=False, args=[],  build_timings=None, buildconfig=""):
     # Warn if bitcoind is already running (unix only)
     try:
         pidofOutput = subprocess.check_output(["pidof", "bitcoind"])
@@ -300,7 +271,7 @@ def run_tests(test_list, build_dir, tests_dir, junitouput, exeext, tmpdir, jobs=
             raise
 
     # Run Tests
-    job_queue = TestHandler(jobs, tests_dir, tmpdir, test_list, flags, file_for_monitoring)
+    job_queue = TestHandler(jobs, tests_dir, tmpdir, test_list, flags)
     time0 = time.time()
     test_results = []
 
@@ -372,7 +343,7 @@ class TestHandler:
     Trigger the testscrips passed in via the list.
     """
 
-    def __init__(self, num_tests_parallel, tests_dir, tmpdir, test_list=None, flags=None, file_for_monitoring=None):
+    def __init__(self, num_tests_parallel, tests_dir, tmpdir, test_list=None, flags=None):
         assert(num_tests_parallel >= 1)
         self.num_jobs = num_tests_parallel
         self.tests_dir = tests_dir
@@ -385,86 +356,54 @@ class TestHandler:
         # (625 is PORT_RANGE/MAX_NODES)
         self.portseed_offset = int(time.time() * 1000) % 625
         self.jobs = []
-        if (file_for_monitoring is not None):
-            if file_for_monitoring[:4] == "node" and file_for_monitoring[4:].isnumeric():
-                file_for_monitoring = os.path.join(file_for_monitoring, "regtest", "bitcoind.log")
-            if file_for_monitoring == "test":
-                file_for_monitoring = "test_framework.log"
-        self.file_for_monitoring = file_for_monitoring
 
     def get_next(self):
-        log_job = None
-        try:
-            while self.num_running < self.num_jobs and self.test_list:
-                # Add tests
-                self.num_running += 1
-                t = self.test_list.pop(0)
-                portseed = len(self.test_list) + self.portseed_offset
-                portseed_arg = ["--portseed={}".format(portseed)]
-                log_stdout = tempfile.SpooledTemporaryFile(max_size=2**16)
-                log_stderr = tempfile.SpooledTemporaryFile(max_size=2**16)
-                test_argv = t.split()
-                tmpdir = [os.path.join("--tmpdir=%s", "%s_%s") %
-                          (self.tmpdir, re.sub(".py$", "", t), portseed)]
-                self.jobs.append((t,
-                                  time.time(),
-                                  subprocess.Popen([sys.executable, os.path.join(self.tests_dir, test_argv[0])] + test_argv[1:] + self.flags + portseed_arg + tmpdir,
-                                                   universal_newlines=True,
-                                                   stdout=log_stdout,
-                                                   stderr=log_stderr),
-                                  log_stdout,
-                                  log_stderr))
-                if self.file_for_monitoring is not None:
-                    logfile = os.path.join(self.tmpdir, f"{t[:-3]}_{portseed}", self.file_for_monitoring)
-                    print("\nWatching file: ", logfile, "\n\n\n")
-                    for _ in range(15):
-                        if os.path.isfile(logfile):
-                            if os.name == 'nt':
-                                log_job = subprocess.Popen(["powershell", "Get-Content", logfile, "-Wait"],
-                                                           universal_newlines=True)
-                            elif os.name == 'posix':
-                                log_job = subprocess.Popen(["tail", "-F", logfile],
-                                                           universal_newlines=True)
-                            break
-                        time.sleep(1)
+        while self.num_running < self.num_jobs and self.test_list:
+            # Add tests
+            self.num_running += 1
+            t = self.test_list.pop(0)
+            portseed = len(self.test_list) + self.portseed_offset
+            portseed_arg = ["--portseed={}".format(portseed)]
+            log_stdout = tempfile.SpooledTemporaryFile(max_size=2**16)
+            log_stderr = tempfile.SpooledTemporaryFile(max_size=2**16)
+            test_argv = t.split()
+            tmpdir = [os.path.join("--tmpdir=%s", "%s_%s") %
+                      (self.tmpdir, re.sub(".py$", "", t), portseed)]
+            self.jobs.append((t,
+                              time.time(),
+                              subprocess.Popen([sys.executable, os.path.join(self.tests_dir, test_argv[0])] + test_argv[1:] + self.flags + portseed_arg + tmpdir,
+                                               universal_newlines=True,
+                                               stdout=log_stdout,
+                                               stderr=log_stderr),
+                              log_stdout,
+                              log_stderr))
+        if not self.jobs:
+            raise IndexError('pop from empty list')
+        while True:
+            # Return first proc that finishes
+            time.sleep(.5)
+            for j in self.jobs:
+                (name, time0, proc, log_out, log_err) = j
+                if on_ci() and int(time.time() - time0) > 40 * 60:
+                    # In travis, timeout individual tests after 20 minutes (to stop tests hanging and not
+                    # providing useful output.
+                    proc.send_signal(signal.SIGINT)
+                if proc.poll() is not None:
+                    log_out.seek(0), log_err.seek(0)
+                    [stdout, stderr] = [l.read().decode('utf-8')
+                                        for l in (log_out, log_err)]
+                    log_out.close(), log_err.close()
+                    if proc.returncode == TEST_EXIT_PASSED and stderr == "":
+                        status = "Passed"
+                    elif proc.returncode == TEST_EXIT_SKIPPED:
+                        status = "Skipped"
+                    else:
+                        status = "Failed"
+                    self.num_running -= 1
+                    self.jobs.remove(j)
 
-
-            if not self.jobs:
-                raise IndexError('pop from empty list')
-            while True:
-                # Return first proc that finishes
-                for j in self.jobs:
-                    (name, time0, proc, log_out, log_err) = j
-                    if on_ci() and int(time.time() - time0) > 40 * 60:
-                        # In travis, timeout individual tests after 20 minutes (to stop tests hanging and not
-                        # providing useful output.
-                        proc.send_signal(signal.SIGINT)
-                    if proc.poll() is not None:
-                        if log_job:
-                            log_job.terminate()
-                            log_job = None
-                        log_out.seek(0), log_err.seek(0)
-                        [stdout, stderr] = [l.read().decode('utf-8')
-                                            for l in (log_out, log_err)]
-                        log_out.close(), log_err.close()
-                        if proc.returncode == TEST_EXIT_PASSED and stderr == "":
-                            status = "Passed"
-                        elif proc.returncode == TEST_EXIT_SKIPPED:
-                            status = "Skipped"
-                        else:
-                            status = "Failed"
-                        self.num_running -= 1
-                        self.jobs.remove(j)
-
-                        return TestResult(name, status, int(time.time() - time0), stdout, stderr)
-
-                if not log_job:
-                    print('.', end='', flush=True)
-                    time.sleep(0.5)
-        finally:
-            if log_job:
-                log_job.terminate()
-
+                    return TestResult(name, status, int(time.time() - time0), stdout, stderr)
+            print('.', end='', flush=True)
 
 
 class TestResult():

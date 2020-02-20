@@ -17,37 +17,18 @@ def do_windows_build():
     pass
 
 def do_linux_build():
-    rawargs="ls -al /usr/lib64/boost"
-    args = shlex.split(rawargs)
-    try:
-        subprocess.call(args)
-    except:
-        exit(-9)
-
-    args=["scl", "enable", "devtoolset-7", "bash"]
-    try:
-        subprocess.call(args)
-    except:
-        exit(-9)
-
     args = ['./autogen.sh']
     try:
         subprocess.call(args)
     except:
         exit(-1)
 
-    args = ['BOOST_ROOT=/usr/lib64/boost169 ./configure']
+    args = ['./configure']
     try:
         subprocess.call(args)
     except:
         exit(-1)
-
-    args = ["nproc", "--all"]
-    out = subprocess.check_output(args)
-    out = out.strip()
-    nproc = "".join(chr(x) for x in out)
-    nproc = "-j" +  nproc
-    args = ['make', nproc]
+    args = ['make']
     try:
         subprocess.call(args)
     except:

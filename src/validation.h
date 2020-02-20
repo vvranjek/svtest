@@ -13,7 +13,6 @@
 
 #include "amount.h"
 #include "blockstreams.h"
-#include "blockvalidation.h"
 #include "chain.h"
 #include "coins.h"
 #include "consensus/consensus.h"
@@ -23,21 +22,17 @@
 #include "script/script_error.h"
 #include "sync.h"
 #include "streams.h"
-#include "task.h"
 #include "txn_double_spend_detector.h"
 #include "txn_validation_result.h"
 #include "versionbits.h"
 
 #include <algorithm>
 #include <atomic>
-#include <chrono>
 #include <cstdint>
 #include <exception>
-#include <functional>
 #include <map>
 #include <set>
 #include <string>
-#include <thread>
 #include <utility>
 #include <vector>
 
@@ -50,7 +45,7 @@ class CInv;
 class Config;
 class CScriptCheck;
 class CTxMemPool;
-struct CTxnHandlers;
+class CTxnHandlers;
 class CTxUndo;
 class CValidationInterface;
 class CValidationState;
@@ -58,16 +53,6 @@ struct ChainTxData;
 
 struct PrecomputedTransactionData;
 struct LockPoints;
-
-namespace boost
-{
-    class thread_group;
-}
-
-namespace task
-{
-    class CCancellationToken;
-}
 
 #define MIN_TRANSACTION_SIZE                                                   \
     (::GetSerializeSize(CTransaction(), SER_NETWORK, PROTOCOL_VERSION))
@@ -79,7 +64,7 @@ static const bool DEFAULT_WHITELISTFORCERELAY = true;
 /** Default for DEFAULT_REJECTMEMPOOLREQUEST. */
 static const bool DEFAULT_REJECTMEMPOOLREQUEST = false;
 /** Default for -minrelaytxfee, minimum relay fee for transactions */
-static const Amount DEFAULT_MIN_RELAY_TX_FEE(250);
+static const Amount DEFAULT_MIN_RELAY_TX_FEE(1000);
 /** Default for -excessutxocharge for transactions transactions */
 static const Amount DEFAULT_UTXO_FEE(0);
 //! -maxtxfee default
@@ -95,25 +80,29 @@ static const uint64_t DEFAULT_ANCESTOR_LIMIT = 25;
 static const uint64_t DEFAULT_DESCENDANT_LIMIT = 25;
 /** Default for -limitancestorsize, maximum kilobytes of tx + all in-mempool
  * ancestors */
-static const uint64_t DEFAULT_ANCESTOR_SIZE_LIMIT = DEFAULT_ANCESTOR_LIMIT * MAX_TX_SIZE_CONSENSUS_BEFORE_GENESIS;
+static const uint64_t DEFAULT_ANCESTOR_SIZE_LIMIT = DEFAULT_ANCESTOR_LIMIT * MAX_TX_SIZE;
 /** Default for -limitdescendantsize, maximum kilobytes of in-mempool
  * descendants */
-static const uint64_t DEFAULT_DESCENDANT_SIZE_LIMIT = DEFAULT_DESCENDANT_LIMIT * MAX_TX_SIZE_CONSENSUS_BEFORE_GENESIS;
+static const uint64_t DEFAULT_DESCENDANT_SIZE_LIMIT = DEFAULT_DESCENDANT_LIMIT * MAX_TX_SIZE;
 /** Default for -mempoolexpiry, expiration time for mempool transactions in
  * hours */
 static const unsigned int DEFAULT_MEMPOOL_EXPIRY = 336;
-/** Default for -nonfinalmempoolexpiry, expiration time for non-final mempool transactions in hours */
-static const unsigned int DEFAULT_NONFINAL_MEMPOOL_EXPIRY = 4 * 7 * 24;
+/** Used to calculate how many bytes of transactions to store for processing during reorg
+ *  The value is multiplied with default block size to calculate actual bytes.
+ */
+static const unsigned int MAX_DISCONNECTED_TX_POOL_SIZE_FACTOR = 20;
 /** The maximum size of a blk?????.dat file (since 0.8) */
 static const unsigned int DEFAULT_PREFERRED_BLOCKFILE_SIZE = 0x8000000; // 128 MiB
 /** The pre-allocation chunk size for blk?????.dat files (since 0.8) */
 static const unsigned int BLOCKFILE_CHUNK_SIZE = 0x1000000; // 16 MiB
+/** The size of the header for each block in a block file */
+static const unsigned int BLOCKFILE_BLOCK_HEADER_SIZE = 8;  // 8 bytes: - 4 bytes for disk magic + 4 bytes for size
 /** The pre-allocation chunk size for rev?????.dat files (since 0.8) */
 static const unsigned int UNDOFILE_CHUNK_SIZE = 0x100000; // 1 MiB
 
 /** Maximum number of script-checking threads allowed */
-static const int MAX_SCRIPTCHECK_THREADS = 64;
-/** -threadsperblock default (number of script-checking threads, 0 = auto) */
+static const int MAX_SCRIPTCHECK_THREADS = 16;
+/** -par default (number of script-checking threads, 0 = auto) */
 static const int DEFAULT_SCRIPTCHECK_THREADS = 0;
 /** Number of blocks that can be requested at any given time from a single peer.
  */
@@ -122,7 +111,7 @@ static const int MAX_BLOCKS_IN_TRANSIT_PER_PEER = 16;
  * Timeout in seconds during which a peer must stall block download progress
  * before being disconnected.
  */
-static const unsigned int DEFAULT_BLOCK_STALLING_TIMEOUT = 2;
+static const unsigned int BLOCK_STALLING_TIMEOUT = 2;
 /**
  * Number of headers sent in one getheaders result. We rely on the assumption
  * that if a peer sends less than this number, we reached its tip. Changing this
@@ -198,6 +187,9 @@ static const unsigned int DEFAULT_BANSCORE_THRESHOLD = 100;
 static const unsigned int DEFAULT_MIN_TIME_INTERVAL_CHECKSUM_MS = 500;
 static const unsigned int DEFAULT_INVALID_CHECKSUM_FREQUENCY = 100;
 
+static const unsigned int DEFAULT_MIN_TIME_INTERVAL_HEADER_MS = 500;
+static const unsigned int DEFAULT_INVALID_HEADER_FREQUENCY = 2000;
+
 /** Default for -persistmempool */
 static const bool DEFAULT_PERSIST_MEMPOOL = true;
 /** Default for using fee filter */
@@ -217,11 +209,6 @@ static const bool DEFAULT_PEERBLOOMFILTERS = true;
 /** Default for -stopatheight */
 static const int DEFAULT_STOPATHEIGHT = 0;
 
-/** Default count of transaction script checker instances */
-constexpr size_t DEFAULT_SCRIPT_CHECK_POOL_SIZE = 4;
-/** Default maximum size of script batches processed by a single checker thread */
-constexpr size_t DEFAULT_SCRIPT_CHECK_MAX_BATCH_SIZE = 128;
-
 extern CScript COINBASE_FLAGS;
 extern CCriticalSection cs_main;
 extern CTxMemPool mempool;
@@ -232,6 +219,7 @@ extern CWaitableCriticalSection csBestBlock;
 extern CConditionVariable cvBlockChange;
 extern std::atomic_bool fImporting;
 extern bool fReindex;
+extern int nScriptCheckThreads;
 extern bool fTxIndex;
 extern bool fIsBareMultisigStd;
 extern bool fRequireStandard;
@@ -283,6 +271,9 @@ static const unsigned int MIN_BLOCKS_TO_KEEP = 288;
 static const signed int DEFAULT_CHECKBLOCKS = 6;
 static const unsigned int DEFAULT_CHECKLEVEL = 3;
 
+/** Default for treating transactions with P2SH in output as non-standard */
+static const bool DEFAULT_ACCEPT_P2SH = true;
+
 // Flush modes to update on-disk chain state
 enum FlushStateMode {
     FLUSH_STATE_NONE,
@@ -305,9 +296,6 @@ enum FlushStateMode {
  */
 static const uint64_t MIN_DISK_SPACE_FOR_BLOCK_FILES = 550 * 1024 * 1024;
 
-/** get number of blocks that are currently being processed */
-int GetProcessingBlocksCount();
-
 class BlockValidationOptions {
 private:
     bool checkPoW : 1;
@@ -328,11 +316,6 @@ public:
     bool shouldValidateMerkleRoot() const { return checkMerkleRoot; }
     bool shouldMarkChecked() const { return markChecked; }
 };
-
-/**
- * Keeping status of currently validating blocks and blocks that we wait after validation
- */
-extern CBlockValidationStatus blockValidationStatus;
 
 /**
  * Verify block without proof-of-work verification.
@@ -371,23 +354,8 @@ bool VerifyNewBlock(const Config &config,
  * @return True if the block is accepted as a valid block.
  */
 bool ProcessNewBlock(const Config &config,
-                     const std::shared_ptr<const CBlock>& pblock,
+                     const std::shared_ptr<const CBlock> pblock,
                      bool fForceProcessing, bool *fNewBlock);
-
-/**
- * Same as ProcessNewBlock but it doesn't activate best chain - it returns a
- * function that should be called asyncrhonously to activate the best chain.
- * Reason for this split is that ProcessNewBlock adds block to mapBlockIndex
- * so we execute that part synchronously as otherwise child blocks that were
- * sent right after the parent could be missing parent even though we've already
- * seen it.
- */
-std::function<bool()> ProcessNewBlockWithAsyncBestChainActivation(
-    task::CCancellationToken&& token,
-    const Config& config,
-    const std::shared_ptr<const CBlock>& pblock,
-    bool fForceProcessing,
-    bool* fNewBlock);
 
 /**
  * Process incoming block headers.
@@ -406,11 +374,6 @@ bool ProcessNewBlockHeaders(const Config &config,
                             const std::vector<CBlockHeader> &block,
                             CValidationState &state,
                             const CBlockIndex **ppindex = nullptr);
-
-/** 
- * The size of the header for each block in a block file 
- */
-unsigned int GetBlockFileBlockHeaderSize(uint64_t nBlockSize);
 
 /**
  * Check whether enough disk space is available for an incoming block.
@@ -452,11 +415,9 @@ void LoadChainTip(const CChainParams &chainparams);
 void UnloadBlockIndex();
 
 /**
- * Initialize script checking pool.
+ * Run an instance of the script checking thread.
  */
-void InitScriptCheckQueues(const Config& config, boost::thread_group& threadGroup);
-//! Shutdown script checking pool.
-void ShutdownScriptCheckQueues();
+void ThreadScriptCheck(int workerNum);
 
 /**
  * Check whether we are doing an initial block download (synchronizing from disk
@@ -480,52 +441,22 @@ std::string GetWarnings(const std::string &strFor);
  * Retrieve a transaction (from memory pool, or from disk, if possible).
  */
 bool GetTransaction(const Config &config, const TxId &txid, CTransactionRef &tx,
-    bool fAllowSlow, uint256 &hashBlock, bool& isGenesisEnabled);
+                    uint256 &hashBlock, bool fAllowSlow = false);
 
 /**
  * Find the best known block, and make it the active tip of the block chain.
  * If it fails, the tip is not updated.
  *
  * pblock is either nullptr or a pointer to a block that is already loaded
- * in memory (to avoid loading it from disk again). It also enables parallel
- * block validation if provided block is building on top of currently active
- * tip and a different call to ActivateBestChain is already in progress.
+ * in memory (to avoid loading it from disk again).
  *
- * Returns true if no fatal errors occurred. Returns false in case a fatal error
- * occurred (no disk space, database error, ...).
- *
- * NOTE: ActivateBestChain checks for tip candidates (better than current
- *      best chain tip so a potential candidate) but is not guaranteed to
- *      either change the tip or even consider the provided pblock. It may
- *      change the tip if a better candidate is found but that block is not
- *      necessarily the one that was provided by the caller of this function.
- *      Because of this state parameter may contain success or error but
- *      that value represents activation process in general and is not
- *      necessarily related to provided block in particular.
+ * Returns true if a new chain tip was set.
  */
 bool ActivateBestChain(
-    const task::CCancellationToken& token,
-    const Config &config,
-    CValidationState &state,
+    const Config &config, CValidationState &state,
     const mining::CJournalChangeSetPtr& changeSet,
     std::shared_ptr<const CBlock> pblock = std::shared_ptr<const CBlock>());
 Amount GetBlockSubsidy(int nHeight, const Consensus::Params &consensusParams);
-
-/**
- * Determines whether block is a best chain candidate or not.
- *
- * Being a candidate means that you might be added to the tip or removed from
- * candidates later on - in any case it indicates that we should wait to see if
- * it lands in the best chain or not.
- */
-bool IsBlockABestChainTipCandidate(CBlockIndex& index);
-
-/**
- * Check whether there are any block index candidates that are older than
- * the provided time and still don't have SCRIPT validity status.
- */
-bool AreOlderOrEqualUnvalidatedBlockIndexCandidates(
-    const std::chrono::time_point<std::chrono::system_clock>& comparisonTime);
 
 /**
  * Guess verification progress (as a fraction between 0.0=genesis and
@@ -563,47 +494,6 @@ bool IsUAHFenabled(const Config &config, const CBlockIndex *pindexPrev);
 
 /** Check if DAA HF has activated. */
 bool IsDAAEnabled(const Config &config, const CBlockIndex *pindexPrev);
-
-/** Check if Genesis has activated. */
-bool IsGenesisEnabled(const Config &config, const CBlockIndex *pindexPrev);
-/** Check if Genesis has activated.
- * Do not call this overload with height of coin. If the coin was created in mempool, 
- * this function will throw exception.
- */
-bool IsGenesisEnabled(const Config& config, int nHeight);
-/**  Check if Genesis has activated.
- * When a coins is present in mempool, it will have height MEMPOOL_HEIGHT. 
- * In this case, you should call this overload and specify the mempool height (chainActive.Height()+1) 
- *as parameter to correctly determine if genesis is enabled for this coin.
- */
-bool IsGenesisEnabled(const Config& config, const Coin& coin, int mempoolHeight  );
-int GetGenesisActivationHeight(const Config& config);
-
-/**
- * A function used to produce a default value for a number of Low priority threads
- * (on the running hardware).
- *
- * If std::thread::hardware_concurrency < 8, then the value is 1, otherwise the returned value
- * shouldn't be greater than 25% of std::thread::hardware_concurrency.
- *
- * @param nTestingHCValue The argument used for testing purposes.
- * @return Returns a number of low priority threads supported by the platform.
- */
-size_t GetNumLowPriorityValidationThrs(size_t nTestingHCValue=SIZE_MAX);
-
-/**
- * A function used to produce a default value for a number of High priority threads
- * (on the running hardware).
- *
- * If std::thread::hardware_concurrency < 3, then the value is 1,
- * If std::thread::hardware_concurrency == 3, then the value is 2,
- * If std::thread::hardware_concurrency == 4, then the value is 3,
- * otherwise the returned value shouldn't be greater than 75% of std::thread::hardware_concurrency.
- *
- * @param nTestingHCValue The argument used for testing purposes.
- * @return Returns a number of high priority threads supported by the platform.
- */
-size_t GetNumHighPriorityValidationThrs(size_t nTestingHCValue=SIZE_MAX);
 
 /**
  * Limit mempool size.
@@ -654,54 +544,27 @@ void CommitTxToMempool(
  * @param config A reference to a configuration
  * @param pool A reference to the mempool
  * @param dsDetector A reference to a double spend detector
- * @param fReadyForFeeEstimation A flag to check if fee estimation can be applied
- * @param fUseLimits A flag to check if timed cancellation source and coins cache limits should be used
  * @return A result of validation.
  */
 CTxnValResult TxnValidation(
     const TxInputDataSPtr& pTxInputData,
     const Config &config,
     CTxMemPool &pool,
-    TxnDoubleSpendDetectorSPtr dsDetector,
-    bool fReadyForFeeEstimation,
-    bool fUseLimits);
-
-/**
- * Handle an exception thrown during txn processing.
- *
- * @param sExceptionMsg A message related to the exception.
- * @param pTxInputData A reference to transaction's details.
- * @param txnValResult A result of txn validation.
- * @param pool A reference to the mempool
- * @param handlers Txn handlers.
- * @return A state of txn processing.
- */
-CValidationState HandleTxnProcessingException(
-    const std::string& sExceptionMsg,
-    const TxInputDataSPtr& pTxInputData,
-    const CTxnValResult& txnValResult,
-    const CTxMemPool& pool,
-    CTxnHandlers& handlers);
+    TxnDoubleSpendDetectorSPtr dsDetector);
 
 /**
  * Batch processing support for txns validation.
  *
- * @param pTxInputData A reference to transaction's details
+ * @param vTxInputData A vector of txns data
  * @param config A reference to a configuration
  * @param pool A reference to the mempool
- * @param handlers Txn handlers
- * @param fReadyForFeeEstimation A flag to check if fee estimation can be applied
- * @param fUseLimits A flag to check if timed cancellation source and coins cache limits should be used
  * @return A vector of validation results
  */
-std::pair<CTxnValResult, CTask::Status> TxnValidationProcessingTask(
-    const TxInputDataSPtr& pTxInputData,
+std::vector<CTxnValResult> TxnValidationBatchProcessing(
+    const TxInputDataSPtrRefVec& vTxInputData,
     const Config &config,
     CTxMemPool &pool,
-    CTxnHandlers& handlers,
-    bool fReadyForFeeEstimation,
-    bool fUseLimits,
-    std::chrono::steady_clock::time_point end);
+    CTxnHandlers& handlers);
 
 /**
  * Process validated txn. Submit txn to the mempool if it is valid.
@@ -732,15 +595,12 @@ void CreateTxRejectMsgForP2PTxn(
 /** Convert CValidationState to a human-readable message for logging */
 std::string FormatStateMessage(const CValidationState &state);
 
-/** Check if all conditions are met to apply fee estimation */
-bool IsCurrentForFeeEstimation();
-
 /**
  * Count ECDSA signature operations the old-fashioned (pre-0.6) way
  * @return number of sigops this transaction's outputs will produce when spent
  * @see CTransaction::FetchInputs
  */
-uint64_t GetSigOpCountWithoutP2SH(const CTransaction &tx, bool isGenesisEnabled, bool& sigOpCountError);
+uint64_t GetSigOpCountWithoutP2SH(const CTransaction &tx);
 
 /**
  * Count ECDSA signature operations in pay-to-script-hash inputs.
@@ -751,25 +611,19 @@ uint64_t GetSigOpCountWithoutP2SH(const CTransaction &tx, bool isGenesisEnabled,
  * inputs
  * @see CTransaction::FetchInputs
  */
-uint64_t GetP2SHSigOpCount(const Config &config, 
-                           const CTransaction &tx,
-                           const CCoinsViewCache &mapInputs, 
-                           bool& sigOpCountError);
+uint64_t GetP2SHSigOpCount(const CTransaction &tx,
+                           const CCoinsViewCache &mapInputs);
 
 /**
  * Compute total signature operation of a transaction.
  * @param[in] tx     Transaction for which we are computing the cost
  * @param[in] inputs Map of previous transactions that have outputs we're
  * spending
- * @param[in] checkP2SH  check if it is P2SH and include signature operation of the redeem scripts
+ * @param[out] flags Script verification flags
  * @return Total signature operation cost of tx
  */
-uint64_t GetTransactionSigOpCount(const Config &config, 
-                                  const CTransaction &tx,
-                                  const CCoinsViewCache &inputs, 
-                                  bool checkP2SH, 
-                                  bool isGenesisEnabled, 
-                                  bool& sigOpCountError);
+uint64_t GetTransactionSigOpCount(const CTransaction &tx,
+                                  const CCoinsViewCache &inputs, int flags);
 
 /**
  * Check whether all inputs of this transaction are valid (no double spends,
@@ -782,23 +636,13 @@ uint64_t GetTransactionSigOpCount(const Config &config,
  * Setting sigCacheStore/scriptCacheStore to false will remove elements from the
  * corresponding cache which are matched. This is useful for checking blocks
  * where we will likely never need the cache entry again.
- *
- * In case a task cancellation is triggered through token before result is
- * known the function returns a std::nullopt
  */
-std::optional<bool> CheckInputs(
-    const task::CCancellationToken& token,
-    const Config& config,
-    bool consensus,
-    const CTransaction& tx,
-    CValidationState& state,
-    const CCoinsViewCache& view,
-    bool fScriptChecks,
-    const uint32_t flags,
-    bool sigCacheStore,
-    bool scriptCacheStore,
-    const PrecomputedTransactionData& txdata,
-    std::vector<CScriptCheck>* pvChecks = nullptr);
+bool CheckInputs(const CTransaction &tx, CValidationState &state,
+                 const CCoinsViewCache &view, bool fScriptChecks,
+                 const uint32_t flags, bool sigCacheStore,
+                 bool scriptCacheStore,
+                 const PrecomputedTransactionData &txdata,
+                 std::vector<CScriptCheck> *pvChecks = nullptr);
 
 /** Apply the effects of this transaction on the UTXO set represented by view */
 void UpdateCoins(const CTransaction &tx, CCoinsViewCache &inputs, int nHeight);
@@ -808,8 +652,8 @@ void UpdateCoins(const CTransaction &tx, CCoinsViewCache &inputs,
 /** Transaction validation functions */
 
 /** Context-independent validity checks for coinbase and non-coinbase transactions */
-bool CheckRegularTransaction(const CTransaction &tx, CValidationState &state, uint64_t maxTxSigOpsCountConsensusBeforeGenesis, uint64_t maxTxSizeConsensus, bool isGenesisEnabled);
-bool CheckCoinbase(const CTransaction &tx, CValidationState &state, uint64_t maxTxSigOpsCountConsensusBeforeGenesis, uint64_t maxTxSizeConsensus, bool isGenesisEnabled);
+bool CheckRegularTransaction(const CTransaction& tx, CValidationState& state);
+bool CheckCoinbase(const CTransaction& tx, CValidationState& state);
 
 namespace Consensus {
 
@@ -822,11 +666,6 @@ bool CheckTxInputs(const CTransaction &tx, CValidationState &state,
                    const CCoinsViewCache &inputs, int nSpendHeight);
 
 } // namespace Consensus
-
-/**
- * Test whether the given transaction is final for the given height and time.
- */
-bool IsFinalTx(const CTransaction &tx, int nBlockHeight, int64_t nBlockTime);
 
 /**
  * Test whether the LockPoints height and time are still valid on the current
@@ -858,7 +697,6 @@ bool SequenceLocks(const CTransaction &tx, int flags,
 bool CheckSequenceLocks(
     const CTransaction &tx,
     const CTxMemPool &pool,
-    const Config& config,
     int flags,
     LockPoints *lp = nullptr,
     bool useExistingLockPoints = false);
@@ -871,25 +709,38 @@ class CScriptCheck {
 private:
     CScript scriptPubKey;
     Amount amount;
-    const CTransaction *ptxTo = 0;
-    unsigned int nIn = 0;
-    uint32_t nFlags = 0;
-    bool cacheStore = false;
-    ScriptError error = SCRIPT_ERR_UNKNOWN_ERROR;
+    const CTransaction *ptxTo;
+    unsigned int nIn;
+    uint32_t nFlags;
+    bool cacheStore;
+    ScriptError error;
     PrecomputedTransactionData txdata;
-    std::reference_wrapper<const Config> config;
-    bool consensus = false;
 
 public:
-    CScriptCheck(const Config &configIn, bool consensusIn, const CScript &scriptPubKeyIn, const Amount amountIn,
+    CScriptCheck()
+        : amount(0), ptxTo(0), nIn(0), nFlags(0), cacheStore(false),
+          error(SCRIPT_ERR_UNKNOWN_ERROR), txdata() {}
+
+    CScriptCheck(const CScript &scriptPubKeyIn, const Amount amountIn,
                  const CTransaction &txToIn, unsigned int nInIn,
                  uint32_t nFlagsIn, bool cacheIn,
-                 const PrecomputedTransactionData& txdataIn)
+                 const PrecomputedTransactionData &txdataIn)
         : scriptPubKey(scriptPubKeyIn), amount(amountIn), ptxTo(&txToIn),
           nIn(nInIn), nFlags(nFlagsIn), cacheStore(cacheIn),
-          error(SCRIPT_ERR_UNKNOWN_ERROR), txdata(txdataIn), config(configIn), consensus(consensusIn) {}
+          error(SCRIPT_ERR_UNKNOWN_ERROR), txdata(txdataIn) {}
 
-    std::optional<bool> operator()(const task::CCancellationToken& token);
+    bool operator()();
+
+    void swap(CScriptCheck &check) {
+        scriptPubKey.swap(check.scriptPubKey);
+        std::swap(ptxTo, check.ptxTo);
+        std::swap(amount, check.amount);
+        std::swap(nIn, check.nIn);
+        std::swap(nFlags, check.nFlags);
+        std::swap(cacheStore, check.cacheStore);
+        std::swap(error, check.error);
+        std::swap(txdata, check.txdata);
+    }
 
     ScriptError GetScriptError() const { return error; }
 };
@@ -915,7 +766,7 @@ void SetBlockIndexFileMetaDataIfNotSet(CBlockIndex& index, CDiskBlockMetaData me
  * transactions are valid, block is a valid size, etc.)
  */
 bool CheckBlock(
-    const Config &Config, const CBlock &block, CValidationState &state, int blockHeight,
+    const Config &Config, const CBlock &block, CValidationState &state,
     BlockValidationOptions validationOptions = BlockValidationOptions());
 
 /**
@@ -926,7 +777,7 @@ bool CheckBlock(
  */
 bool ContextualCheckTransaction(const Config &config, const CTransaction &tx,
                                 CValidationState &state, int nHeight,
-                                int64_t nLockTimeCutoff, bool fromBlock);
+                                int64_t nLockTimeCutoff);
 
 /**
  * This is a variant of ContextualCheckTransaction which computes the contextual
@@ -999,15 +850,11 @@ bool PreciousBlock(const Config &config, CValidationState &state,
 bool InvalidateBlock(const Config &config, CValidationState &state,
                      CBlockIndex *pindex);
 
-/** Blocks that are in the Config::GetInvalidBlocks() will be marked as invalid.*/
-void InvalidateBlocksFromConfig(const Config &config);
-
 /** Remove invalidity status from a block and its descendants. */
 bool ResetBlockFailureFlags(CBlockIndex *pindex);
 
 /** The currently-connected chain of blocks (protected by cs_main). */
 extern CChain chainActive;
-extern CChainActiveSharedData chainActiveSharedData;
 
 /** Global variable that points to the active CCoinsView (protected by cs_main)
  */
@@ -1018,12 +865,12 @@ extern CCoinsViewCache *pcoinsTip;
 extern CBlockTreeDB *pblocktree;
 
 /**
- * Return the MTP and spend height, which is one more than the inputs.GetBestBlock().
+ * Return the spend height, which is one more than the inputs.GetBestBlock().
  * While checking, GetBestBlock() refers to the parent block. (protected by
  * cs_main)
  * This is also true for mempool checks.
  */
-std::pair<int,int> GetSpendHeightAndMTP(const CCoinsViewCache &inputs);
+int GetSpendHeight(const CCoinsViewCache &inputs);
 
 /**
  * Reject codes greater or equal to this can be returned by AcceptToMemPool for
@@ -1037,8 +884,6 @@ static const unsigned int REJECT_HIGHFEE = 0x100;
 static const unsigned int REJECT_ALREADY_KNOWN = 0x101;
 /** Transaction conflicts with a transaction already known */
 static const unsigned int REJECT_CONFLICT = 0x102;
-/** No space for transaction */
-static const unsigned int REJECT_MEMPOOL_FULL = 0x103;
 
 /** Dump the mempool to disk. */
 void DumpMempool();

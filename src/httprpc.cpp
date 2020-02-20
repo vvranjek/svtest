@@ -323,7 +323,16 @@ static bool HTTPReq_JSONRPC(Config &config, HTTPRequest *req,
         // singleton request
         if (valRequest.isObject()) {
             jreq.parse(valRequest);
-            tableRPC.execute(config, jreq, req, false);
+            // getBlock is not present in tableRpc, so we need to explicitly check for it
+            if (jreq.strMethod == "getblock") {
+                getblock(config, jreq, req, false);
+            } else {
+                UniValue result = tableRPC.execute(config, jreq);
+                strReply = JSONRPCReply(result, NullUniValue, jreq.id);
+                req->WriteHeader("Content-Type", "application/json");
+                req->WriteReply(HTTP_OK, strReply);
+            }
+
         // array of requests
         } else if (valRequest.isArray()) {
             JSONRPCExecBatch(config, jreq, valRequest.get_array(), *req);

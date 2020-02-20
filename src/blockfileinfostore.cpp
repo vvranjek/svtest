@@ -13,7 +13,7 @@
 std::unique_ptr<CBlockFileInfoStore> pBlockFileInfoStore = std::make_unique<CBlockFileInfoStore>();
 
 void CBlockFileInfoStore::FindNextFileWithEnoughEmptySpace(const Config &config,
-    uint64_t nAddSize, unsigned int& nFile)
+    unsigned int nAddSize, unsigned int& nFile)
 {
     // this while instead of if is here because first commit introduced it
     // and vinfoBlockFile.size() can exceed nLastBlockFile at least in
@@ -71,7 +71,7 @@ std::vector<std::pair<int, const CBlockFileInfo *>> CBlockFileInfoStore::GetAndC
 
 
 bool CBlockFileInfoStore::FindBlockPos(const Config &config, CValidationState &state,
-    CDiskBlockPos &pos, uint64_t nAddSize, unsigned int nHeight,
+    CDiskBlockPos &pos, unsigned int nAddSize, unsigned int nHeight,
     uint64_t nTime, bool& fCheckForPruning, bool fKnown) {
     LOCK(cs_LastBlockFile);
 
@@ -105,9 +105,9 @@ bool CBlockFileInfoStore::FindBlockPos(const Config &config, CValidationState &s
     }
 
     if (!fKnown) {
-        uint64_t nOldChunks =
+        unsigned int nOldChunks =
             (pos.nPos + BLOCKFILE_CHUNK_SIZE - 1) / BLOCKFILE_CHUNK_SIZE;
-        uint64_t nNewChunks =
+        unsigned int nNewChunks =
             (vinfoBlockFile[nFile].nSize + BLOCKFILE_CHUNK_SIZE - 1) /
             BLOCKFILE_CHUNK_SIZE;
         if (nNewChunks > nOldChunks) {
@@ -137,19 +137,19 @@ bool CBlockFileInfoStore::FindBlockPos(const Config &config, CValidationState &s
 }
 
 bool CBlockFileInfoStore::FindUndoPos(CValidationState &state, int nFile, CDiskBlockPos &pos,
-    uint64_t nAddSize, bool& fCheckForPruning) {
+    unsigned int nAddSize, bool& fCheckForPruning) {
     pos.nFile = nFile;
 
     LOCK(cs_LastBlockFile);
 
-    uint64_t nNewSize;
+    unsigned int nNewSize;
     pos.nPos = vinfoBlockFile[nFile].nUndoSize;
     nNewSize = vinfoBlockFile[nFile].nUndoSize += nAddSize;
     setDirtyFileInfo.insert(nFile);
 
-    uint64_t nOldChunks =
+    unsigned int nOldChunks =
         (pos.nPos + UNDOFILE_CHUNK_SIZE - 1) / UNDOFILE_CHUNK_SIZE;
-    uint64_t nNewChunks =
+    unsigned int nNewChunks =
         (nNewSize + UNDOFILE_CHUNK_SIZE - 1) / UNDOFILE_CHUNK_SIZE;
     if (nNewChunks > nOldChunks) {
         if (fPruneMode) {

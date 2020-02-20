@@ -9,7 +9,6 @@
 #include "random.h"
 
 #include <cassert>
-#include <config.h>
 
 bool CCoinsView::GetCoin(const COutPoint &outpoint, Coin &coin) const {
     return false;
@@ -27,9 +26,6 @@ bool CCoinsView::BatchWrite(CCoinsMap &mapCoins, const uint256 &hashBlock) {
     return false;
 }
 CCoinsViewCursor *CCoinsView::Cursor() const {
-    return nullptr;
-}
-CCoinsViewCursor* CCoinsView::Cursor(const TxId &txId) const {
     return nullptr;
 }
 
@@ -55,9 +51,6 @@ bool CCoinsViewBacked::BatchWrite(CCoinsMap &mapCoins,
 }
 CCoinsViewCursor *CCoinsViewBacked::Cursor() const {
     return base->Cursor();
-}
-CCoinsViewCursor* CCoinsViewBacked::Cursor(const TxId &txId) const {
-    return base->Cursor(txId);
 }
 size_t CCoinsViewBacked::EstimateSize() const {
     return base->EstimateSize();
@@ -110,11 +103,10 @@ bool CCoinsViewCache::GetCoin(const COutPoint &outpoint, Coin &coin) const {
 }
 
 void CCoinsViewCache::AddCoin(const COutPoint &outpoint, Coin coin,
-                              bool possible_overwrite,
-                              uint64_t genesisActivationHeight) {
+                              bool possible_overwrite) {
     std::unique_lock<std::mutex> lock { mCoinsViewCacheMtx };
     assert(!coin.IsSpent());
-    if (coin.GetTxOut().scriptPubKey.IsUnspendable( coin.GetHeight() >= genesisActivationHeight)) {
+    if (coin.GetTxOut().scriptPubKey.IsUnspendable()) {
         return;
     }
     CCoinsMap::iterator it;
@@ -139,7 +131,7 @@ void CCoinsViewCache::AddCoin(const COutPoint &outpoint, Coin coin,
     cachedCoinsUsage += it->second.coin.DynamicMemoryUsage();
 }
 
-void AddCoins(CCoinsViewCache &cache, const CTransaction &tx, int nHeight, uint64_t genesisActivationHeight,
+void AddCoins(CCoinsViewCache &cache, const CTransaction &tx, int nHeight,
               bool check) {
     bool fCoinbase = tx.IsCoinBase();
     const TxId txid = tx.GetId();
@@ -150,7 +142,7 @@ void AddCoins(CCoinsViewCache &cache, const CTransaction &tx, int nHeight, uint6
         // in order to correctly deal with the pre-BIP30 occurrences of
         // duplicate coinbase transactions.
         cache.AddCoin(outpoint, Coin(tx.vout[i], nHeight, fCoinbase),
-                      overwrite, genesisActivationHeight);
+                      overwrite);
     }
 }
 
@@ -286,11 +278,6 @@ CCoinsViewCursor* CCoinsViewCache::Cursor() const {
     return base->Cursor();
 }
 
-CCoinsViewCursor* CCoinsViewCache::Cursor(const TxId &txId) const {
-    std::unique_lock<std::mutex> lock{ mCoinsViewCacheMtx };
-    return base->Cursor(txId);
-}
-
 std::vector<uint256> CCoinsViewCache::GetHeadBlocks() const {
     std::unique_lock<std::mutex> lock { mCoinsViewCacheMtx };
     return base->GetHeadBlocks();
@@ -380,29 +367,6 @@ bool CCoinsViewCache::HaveInputs(const CTransaction &tx) const {
     return true;
 }
 
-std::optional<bool> CCoinsViewCache::HaveInputsLimited(
-    const CTransaction &tx,
-    size_t maxCachedCoinsUsage) const
-{
-    if (tx.IsCoinBase()) {
-        return true;
-    }
-    {
-        std::unique_lock<std::mutex> lock { mCoinsViewCacheMtx };
-        for (const auto& input: tx.vin) {
-            if (!HaveCoinNL(input.prevout)) {
-                return false;
-            }
-
-            if(maxCachedCoinsUsage > 0 && cachedCoinsUsage >= maxCachedCoinsUsage)
-            {
-                return {};
-            }
-        }
-    }
-    return true;
-}
-
 double CCoinsViewCache::GetPriority(const CTransaction &tx, int nHeight,
                                     Amount &inChainInputValue) const {
     inChainInputValue = Amount(0);
@@ -427,46 +391,17 @@ double CCoinsViewCache::GetPriority(const CTransaction &tx, int nHeight,
     return tx.ComputePriority(dResult);
 }
 
-static const int MAX_VIEW_ITERATIONS = 100;
+// TODO: merge with similar definition in undo.h.
+static const size_t MAX_OUTPUTS_PER_TX =
+    MAX_TX_SIZE / ::GetSerializeSize(CTxOut(), SER_NETWORK, PROTOCOL_VERSION);
 
-const Coin AccessByTxid(const CCoinsViewCache& view, const TxId& txid)
-{
-    // wtih MAX_VIEW_ITERATIONS we are avoiding for loop to MAX_OUTPUTS_PER_TX (in millions after genesis)
-    // performance testing indicates that after 100 look up by cursor becomes faster
-
-    for (int n = 0; n < MAX_VIEW_ITERATIONS; n++) {
-        const Coin& alternate = view.AccessCoin(COutPoint(txid, n));
+const Coin &AccessByTxid(const CCoinsViewCache &view, const TxId &txid) {
+    for (uint32_t n = 0; n < MAX_OUTPUTS_PER_TX; n++) {
+        const Coin &alternate = view.AccessCoin(COutPoint(txid, n));
         if (!alternate.IsSpent()) {
             return alternate;
         }
     }
 
-    // for large output indexes delegate search to db cursor/iterator by key prefix (txId)
-
-    COutPoint key;
-    Coin coin;
-
-    std::unique_ptr<CCoinsViewCursor> cursor{ view.Cursor(txid) };
-
-    if (cursor->Valid())
-    {
-        cursor->GetKey(key);
-    }
-    while (cursor->Valid() && key.GetTxId() == txid)
-    {
-        if (!cursor->GetValue(coin))
-        {
-            return coinEmpty;
-        }
-        if (!coin.IsSpent())
-        {
-            return coin;
-        }
-        cursor->Next();
-        if (cursor->Valid())
-        {
-            cursor->GetKey(key);
-        }
-    }
     return coinEmpty;
 }

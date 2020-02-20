@@ -12,7 +12,6 @@
 //
 #include <boost/chrono/chrono.hpp>
 #include <boost/thread.hpp>
-#include <atomic>
 #include <map>
 
 //
@@ -55,10 +54,9 @@ public:
 
     // To keep things as simple as possible, there is no unschedule.
 
-    // Start the lightweight task scheduler thread which services the queue
-    // 'forever' (until either this class instance is destroyed or the used
-    // boost::thread_group interrupts the thread using boost::interrupt_thread).
-    void startServiceThread(boost::thread_group& threadGroup);
+    // Services the queue 'forever'. Should be run in a thread, and interrupted
+    // using boost::interrupt_thread
+    void serviceQueue();
 
     // Tell any threads running serviceQueue to stop as soon as they're done
     // servicing whatever task they're currently servicing (drain=false) or when
@@ -74,14 +72,12 @@ private:
     std::multimap<boost::chrono::system_clock::time_point, Function> taskQueue;
     boost::condition_variable newTaskScheduled;
     mutable boost::mutex newTaskMutex;
-    std::atomic<int> nThreadsServicingQueue;
+    int nThreadsServicingQueue;
     bool stopRequested;
     bool stopWhenEmpty;
     bool shouldStop() {
         return stopRequested || (stopWhenEmpty && taskQueue.empty());
     }
-
-    void serviceQueue();
 };
 
 #endif
