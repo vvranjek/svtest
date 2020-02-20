@@ -124,6 +124,7 @@ class BitcoinTestFramework():
         self._start_logging()
 
         success = TestStatus.FAILED
+        success_log = ''
 
         try:
             self.setup_chain()
@@ -134,7 +135,10 @@ class BitcoinTestFramework():
             self.log.exception("JSONRPC error")
         except SkipTest as e:
             self.log.warning("Test Skipped: %s" % e.message)
+            print("Test Skipped: %s" % e.message)
             success = TestStatus.SKIPPED
+            success_log = e.message
+
         except AssertionError as e:
             self.log.exception("Assertion failed")
         except KeyError as e:
@@ -184,7 +188,8 @@ class BitcoinTestFramework():
             self.log.info("Tests successful")
             exit_code = TEST_EXIT_PASSED
         elif success == TestStatus.SKIPPED:
-            self.log.info("Test skipped")
+            self.log.info("Test skipped: %s" % success_log)
+            print("Test skipped: %s" % success_log)
             exit_code = TEST_EXIT_SKIPPED
         else:
             self.log.error("Test failed. Test logging available at %s/test_framework.log", self.options.tmpdir)
