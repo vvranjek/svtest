@@ -312,8 +312,10 @@ def run_tests(test_list, build_dir, tests_dir, junitouput, exeext, tmpdir, jobs=
 
     all_passed = all(
         map(lambda test_result: test_result.status == "Passed", test_results))
+    
+    skipped = any(map(lambda test_result: test_result.status == "Skipped", test_results))
 
-    sys.exit(not all_passed)
+    sys.exit((not all_passed) or skipped)
 
 
 def print_results(test_results, max_len_name, runtime):
@@ -376,7 +378,7 @@ class TestHandler:
                                                stdout=log_stdout,
                                                stderr=log_stderr),
                               log_stdout,
-                              log_stderr))
+                              log_stderr))f
         if not self.jobs:
             raise IndexError('pop from empty list')
         while True:
