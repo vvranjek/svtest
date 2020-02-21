@@ -25,7 +25,9 @@ RUN dnf update -y && dnf install     -y  \
        perl-App-cpanminus \
        wget             \
        bzip2-devel      \
-       python3 python3-libs python3-devel python3-pip python3-zmq
+       python3 python3-libs python3-devel python3-pip
+       
+RUN pip3 install pyzmq
        
 
 RUN cpanm Test::More && cpanm PerlIO::gzip && cpanm JSON
