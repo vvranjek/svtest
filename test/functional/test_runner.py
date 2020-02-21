@@ -314,6 +314,11 @@ def run_tests(test_list, build_dir, tests_dir, junitouput, exeext, tmpdir, jobs=
         map(lambda test_result: test_result.status == "Passed", test_results))
     
     skipped = any(map(lambda test_result: test_result.status == "Skipped", test_results))
+    
+    print("All_passed: %s" % all_passed)
+    print("Skipped: %s" % skipped)
+    ext = (not all_passed) or skipped
+    print("Exit is: %s" % ext)
 
     sys.exit((not all_passed) or skipped)
 

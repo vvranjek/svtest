@@ -22,8 +22,9 @@ def main():
         exit(-1)
 
     print("functional tests completed with result code {}".format(r1))
-    r1 ^= 1 # 1 rather than 0 is returned on success
-    exit(abs(r1))
+	exit(r1)
+    #r1 ^= 1 # 1 rather than 0 is returned on success
+    #exit(abs(r1))
 
 if __name__ == '__main__':
     main()
