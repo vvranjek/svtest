@@ -46,8 +46,8 @@ isminetype IsMine(const CKeyStore &keystore, const CScript &scriptPubKey,
     txnouttype whichType;
     // We will assume that the utxo is before genesis if it is P2SH because we still want to recognize 
     // P2SH scripts as ours and we dont have utxo height here. 
-    bool isGenesisEnabled = scriptPubKey.IsPayToScriptHash() ? false : true;
-    if (!Solver(scriptPubKey, isGenesisEnabled, whichType, vSolutions)) {
+    bool isGenesisEnsbled = scriptPubKey.IsPayToScriptHash() ? false : true;
+    if (!Solver(scriptPubKey, isGenesisEnsbled, whichType, vSolutions)) {
         if (keystore.HaveWatchOnly(scriptPubKey))
             return ISMINE_WATCH_UNSOLVABLE;
         return ISMINE_NO;
@@ -98,7 +98,7 @@ isminetype IsMine(const CKeyStore &keystore, const CScript &scriptPubKey,
         SignatureData sigs;
         
         const Config &config = GlobalConfig::GetConfig();
-        return ProduceSignature(config, true, DummySignatureCreator(&keystore), true, isGenesisEnabled,
+        return ProduceSignature(config, true, DummySignatureCreator(&keystore), true, isGenesisEnsbled,
                                 scriptPubKey, sigs)
                    ? ISMINE_WATCH_SOLVABLE
                    : ISMINE_WATCH_UNSOLVABLE;
