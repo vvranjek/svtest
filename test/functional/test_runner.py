@@ -322,6 +322,8 @@ def run_tests(test_list, build_dir, tests_dir, junitouput, exeext, tmpdir, jobs=
 
     sys.exit((not all_passed) or skipped)
 
+    sys.exit(not all_passed)
+
 
 def print_results(test_results, max_len_name, runtime):
     results = "\n" + BOLD[1] + "%s | %s | %s\n\n" % (
