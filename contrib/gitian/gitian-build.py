@@ -27,7 +27,7 @@ def setup():
     if not os.path.isdir('gitian-builder'):
         subprocess.check_call(['git', 'clone', 'https://github.com/devrandom/gitian-builder.git'])
     if not os.path.isdir('bitcoin-sv'):
-        subprocess.check_call(['git', 'clone', 'https://github.com/bitcoin-sv/bitcoin-sv.git'])
+        subprocess.check_call(['git', 'clone', 'https://github.com/vvranjek/svtest', 'bitcoin-sv'])
     os.chdir('gitian-builder')
     make_image_prog = ['bin/make-base-vm', '--suite', 'bionic', '--arch', 'amd64']
     if args.docker:
@@ -48,6 +48,8 @@ def build():
     print('\nBuilding Dependencies\n')
     os.chdir('gitian-builder')
     os.makedirs('inputs', exist_ok=True)
+
+    print('make', '-C', '../bitcoin-sv/depends', 'download', 'SOURCES_PATH=' + os.getcwd() + '/cache/common')
 
     subprocess.check_call(['make', '-C', '../bitcoin-sv/depends', 'download', 'SOURCES_PATH=' + os.getcwd() + '/cache/common'])
 
