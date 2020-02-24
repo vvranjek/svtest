@@ -12,7 +12,6 @@
 
 #include <iterator>
 
-#pragma pack(push, 1)
 /**
  * Implements a drop-in replacement for std::vector<T> which stores up to N
  * elements directly (without heap allocation). The types Size and Diff are used
@@ -32,8 +31,8 @@
  * The data type T must be movable by memmove/realloc(). Once we switch to C++,
  * move constructors can be used instead.
  */
-template <unsigned int N, typename T, typename Size = uint32_t,
-          typename Diff = int32_t>
+template <unsigned int N, typename T, typename Size = uint64_t,
+          typename Diff = int64_t>
 class prevector {
 public:
     typedef Size size_type;
@@ -573,6 +572,5 @@ public:
 
     const value_type *data() const { return item_ptr(0); }
 };
-#pragma pack(pop)
 
 #endif

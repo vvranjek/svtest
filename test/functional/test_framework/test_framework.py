@@ -71,6 +71,7 @@ class BitcoinTestFramework():
         self.setup_clean_chain = False
         self.nodes = []
         self.mocktime = 0
+        self.runNodesWithRequiredParams = True
         self.set_test_params()
 
         assert hasattr(
@@ -124,7 +125,6 @@ class BitcoinTestFramework():
         self._start_logging()
 
         success = TestStatus.FAILED
-        success_log = ''
 
         try:
             self.setup_chain()
@@ -135,10 +135,7 @@ class BitcoinTestFramework():
             self.log.exception("JSONRPC error")
         except SkipTest as e:
             self.log.warning("Test Skipped: %s" % e.message)
-            print("Test Skipped: %s" % e.message)
             success = TestStatus.SKIPPED
-            success_log = e.message
-
         except AssertionError as e:
             self.log.exception("Assertion failed")
         except KeyError as e:
@@ -188,8 +185,7 @@ class BitcoinTestFramework():
             self.log.info("Tests successful")
             exit_code = TEST_EXIT_PASSED
         elif success == TestStatus.SKIPPED:
-            self.log.info("Test skipped: %s" % success_log)
-            print("Test skipped: %s" % success_log)
+            self.log.info("Test skipped")
             exit_code = TEST_EXIT_SKIPPED
         else:
             self.log.error("Test failed. Test logging available at %s/test_framework.log", self.options.tmpdir)
@@ -260,7 +256,7 @@ class BitcoinTestFramework():
 
         node = self.nodes[i]
 
-        node.start(extra_args, stderr)
+        node.start(self.runNodesWithRequiredParams, extra_args, stderr)
         node.wait_for_rpc_connection()
 
         if self.options.coveragedir is not None:
@@ -274,7 +270,7 @@ class BitcoinTestFramework():
         assert_equal(len(extra_args), self.num_nodes)
         try:
             for i, node in enumerate(self.nodes):
-                node.start(extra_args[i])
+                node.start(self.runNodesWithRequiredParams, extra_args[i])
             for i, node in enumerate(self.nodes):
                 node.wait_for_rpc_connection()
                 if(self.options.waitforpid):
@@ -294,7 +290,7 @@ class BitcoinTestFramework():
     # This method runs and stops bitcoind node with index 'node_index'.
     # It also creates (and handles closing of) 'number_of_connections' connections to bitcoind node with index 'node_index'.
     @contextlib.contextmanager
-    def run_node_with_connections(self, title, node_index, args, number_of_connections):
+    def run_node_with_connections(self, title, node_index, args, number_of_connections, ip='127.0.0.1', strSubVer=None, wait_for_verack=True):
         logger.debug("setup %s", title)
 
         self.start_node(node_index, args)
@@ -305,17 +301,18 @@ class BitcoinTestFramework():
 
         connections = []
         for connCb in connectionCbs:
-            connection = NodeConn('127.0.0.1', p2p_port(0), self.nodes[node_index], connCb)
+            connection = NodeConn(ip, p2p_port(0), self.nodes[node_index], connCb, strSubVer=strSubVer)
             connections.append(connection)
             connCb.add_connection(connection)
 
         thr = NetworkThread()
         thr.start()
-        for connCb in connectionCbs:
-            connCb.wait_for_verack()
+        if wait_for_verack:
+            for connCb in connectionCbs:
+                connCb.wait_for_verack()
 
         logger.debug("before %s", title)
-        yield connections
+        yield tuple(connections)
         logger.debug("after %s", title)
 
         for connection in connections:
@@ -529,9 +526,10 @@ class ComparisonTestFramework(BitcoinTestFramework):
     - 2 binaries: 1 test binary, 1 ref binary
     - n>2 binaries: 1 test binary, n-1 ref binaries"""
 
-    def __init__(self):
+    def __init__(self, destAddress = '127.0.0.1'):
         super(ComparisonTestFramework,self).__init__()
         self.chain = ChainManager()
+        self.destAddr = destAddress
         self._network_thread = None
         if not hasattr(self, "testbinary"):
             self.testbinary = [os.getenv("BITCOIND", "bitcoind")]
@@ -572,6 +570,7 @@ class ComparisonTestFramework(BitcoinTestFramework):
     def init_network(self):
         # Start creating test manager which help to manage test cases
         self.test = TestManager(self, self.options.tmpdir)
+        self.test.destAddr = self.destAddr
         # (Re)start network
         self.restart_network()
 
@@ -585,6 +584,10 @@ class ComparisonTestFramework(BitcoinTestFramework):
             return TestInstance([[self.chain.tip, False]])
         else:
             return TestInstance([[self.chain.tip, reject]])
+
+    def check_mempool(self, rpc, should_be_in_mempool):
+        wait_until(lambda: {t.hash for t in should_be_in_mempool}.issubset(set(rpc.getrawmempool())), timeout=20)
+
 
 
 class SkipTest(Exception):

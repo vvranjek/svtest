@@ -106,6 +106,9 @@ static const CRPCConvertParam vRPCConvertParams[] = {
     {"importmulti", 1, "options"},
     {"verifychain", 0, "checklevel"},
     {"verifychain", 1, "nblocks"},
+    {"getblockstats", 1, "stats"},
+    {"getblockstatsbyheight", 0, "height"},
+    {"getblockstatsbyheight", 1, "stats"},
     {"pruneblockchain", 0, "height"},
     {"keypoolrefill", 0, "newsize"},
     {"getrawmempool", 0, "verbose"},
@@ -119,6 +122,7 @@ static const CRPCConvertParam vRPCConvertParams[] = {
     {"getmempooldescendants", 1, "verbose"},
     {"disconnectnode", 1, "nodeid"},
     {"getminingcandidate", 0, "coinbase"},
+    {"getblockbyheight", 0, "height"},
     // Echo with conversion (For testing only)
     {"echojson", 0, "arg0"},
     {"echojson", 1, "arg1"},

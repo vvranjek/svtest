@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <unordered_map>
 #include <mutex>
+#include <optional>
 
 /**
  * A UTXO entry.
@@ -163,6 +164,10 @@ public:
     //! Get a cursor to iterate over the whole state
     virtual CCoinsViewCursor *Cursor() const;
 
+    //! Get a cursor to iterate over coins by txId. Cursor is positioned at the first key in the source that is at or past target.
+    //! If coin with txId is not found then cursor is at position at first record after txId - source is sorted by txId
+    virtual CCoinsViewCursor* Cursor(const TxId& txId) const;
+
     //! As we use CCoinsViews polymorphically, have a virtual destructor
     virtual ~CCoinsView() {}
 
@@ -184,6 +189,7 @@ public:
     virtual void SetBackend(CCoinsView &viewIn);
     bool BatchWrite(CCoinsMap &mapCoins, const uint256 &hashBlock) override;
     CCoinsViewCursor *Cursor() const override;
+    CCoinsViewCursor *Cursor(const TxId &txId) const override;
     size_t EstimateSize() const override;
 };
 
@@ -212,6 +218,7 @@ public:
     void SetBestBlock(const uint256 &hashBlock);
     bool BatchWrite(CCoinsMap &mapCoins, const uint256 &hashBlock) override;
     CCoinsViewCursor *Cursor() const override;
+    CCoinsViewCursor *Cursor(const TxId &txId) const override;
     std::vector<uint256> GetHeadBlocks() const override;
     void SetBackend(CCoinsView &viewIn) override;
     size_t EstimateSize() const override;
@@ -233,9 +240,11 @@ public:
     /**
      * Add a coin. Set potential_overwrite to true if a non-pruned version may
      * already exist.
+     * genesisActivationHeight parameter is used to check if Genesis upgrade rules
+     * are in effect for this coin. It is required to correctly determine if coin is unspendable.
      */
     void AddCoin(const COutPoint &outpoint, Coin coin,
-                 bool potential_overwrite);
+                 bool potential_overwrite, uint64_t genesisActivationHeight);
 
     /**
      * Spend a coin. Pass moveto in order to get the deleted data.
@@ -283,6 +292,10 @@ public:
     //! set represented by this view
     bool HaveInputs(const CTransaction &tx) const;
 
+    //! Same as HaveInputs but with addition of limiting cache size
+    //! If result is std::nullopt
+    std::optional<bool> HaveInputsLimited(const CTransaction &tx, size_t maxCachedCoinsUsage) const;
+
     /**
      * Return priority of tx at height nHeight. Also calculate the sum of the
      * values of the inputs that are already in the chain. These are the inputs
@@ -323,10 +336,10 @@ private:
 // an addition is an overwrite.
 // TODO: pass in a boolean to limit these possible overwrites to known
 // (pre-BIP34) cases.
-void AddCoins(CCoinsViewCache &cache, const CTransaction &tx, int nHeight,
+void AddCoins(CCoinsViewCache &cache, const CTransaction &tx, int nHeight, uint64_t genesisActivationHeight,
               bool check = false);
 
 //! Utility function to find any unspent output with a given txid.
-const Coin &AccessByTxid(const CCoinsViewCache &cache, const TxId &txid);
+const Coin AccessByTxid(const CCoinsViewCache &cache, const TxId &txid);
 
 #endif // BITCOIN_COINS_H

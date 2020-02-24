@@ -14,7 +14,7 @@ RUN apt-get update &&   \
        libssl-dev       \
        libevent-dev     \
        libminiupnpc-dev \
-       libzmq5-dev      \
+       libzmq3-dev      \
        git              \
        python3          \
        python3-pip      \

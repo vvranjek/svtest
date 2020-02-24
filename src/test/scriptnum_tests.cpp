@@ -9,7 +9,7 @@
 
 #include <boost/test/unit_test.hpp>
 
-#include "big_int.hpp"
+#include "big_int.h"
 
 using namespace std;
 using bsv::bint;
@@ -95,9 +95,9 @@ BOOST_AUTO_TEST_CASE(insertion_op)
         BOOST_CHECK_EQUAL(expected.str(), actual.str());
     }
 
-    for(const bint n : test_data)
+    for(const int64_t n : test_data)
     {
-        CScriptNum a{n};
+        CScriptNum a{bint{n}};
         ostringstream actual;
         actual << a;
 
@@ -118,11 +118,12 @@ BOOST_AUTO_TEST_CASE(equality)
         BOOST_CHECK_EQUAL(b, a);
     }
 
-    for(bint n : test_data)
+    for(const int64_t n : test_data)
     {
-        n *= 10; // *10 so we are testing outside of range of int64_t
-        CScriptNum a{n};
-        CScriptNum b{n};
+        bint bn{n};
+        bn *= bint{10}; // *10 so we are testing outside of range of int64_t
+        CScriptNum a{bn};
+        CScriptNum b{bn};
         BOOST_CHECK_EQUAL(a, a);
         BOOST_CHECK_EQUAL(a, b);
         BOOST_CHECK_EQUAL(b, a);
@@ -229,17 +230,21 @@ BOOST_AUTO_TEST_CASE(subtraction)
 
 BOOST_AUTO_TEST_CASE(multiplication)
 {
-    const vector<tuple<int64_t, int64_t, int64_t>> test_data{
+    // clang-format off
+    const vector<tuple<int64_t, int64_t, int64_t>> test_data
+    {
         {1, -1, -1},
         {-1, 1, -1},
-        {0, 1, 0},
+        {0, 1, 0}, 
         {1, 0, 0},
         {1, 1, 1},
         {-1, -1, 1},
         {min64, 1, min64},
         {min64 + 1, -1, max64},
         {max64, 1, max64},
-        {max64, -1, min64 + 1}};
+        {max64, -1, min64 + 1}
+    };
+    // clang-format on
 
     for(const auto& [n, m, o] : test_data)
     {
@@ -266,7 +271,6 @@ BOOST_AUTO_TEST_CASE(division)
         {1, -1, -1},
         {-1, 1, -1},
         {0, 1, 0},
-        //{1, 0, 0},
         {1, 1, 1},
         {-1, -1, 1},
         {min64, 1, min64},
@@ -353,8 +357,15 @@ BOOST_AUTO_TEST_CASE(and_)
 
 BOOST_AUTO_TEST_CASE(negation)
 {
-    const vector<pair<int64_t, int64_t>> test_data{
-        {0, 0}, {1, -1}, {-1, 1}, {max64, min64 + 1}};
+    // clang-format off
+    const vector<pair<int64_t, int64_t>> test_data
+    {
+        {0, 0}, 
+        {1, -1}, 
+        {-1, 1}, 
+        {max64, min64+1}
+    };
+    // clang-format off
 
     for(const auto [n, m] : test_data)
     {
@@ -371,6 +382,36 @@ BOOST_AUTO_TEST_CASE(negation)
         CScriptNum b{bint{m}};
         BOOST_CHECK_EQUAL(b, -a);
     }
+}
+
+BOOST_AUTO_TEST_CASE(getint)
+{
+    constexpr int min_int{numeric_limits<int>::min()};
+    constexpr int max_int{numeric_limits<int>::max()};
+
+    const bint max64{max_int};
+    CScriptNum max{max64 + 1};
+    BOOST_CHECK_EQUAL(max_int, max.getint());
+
+    const bint min64{min_int};
+    CScriptNum min{min64 - 1};
+    BOOST_CHECK_EQUAL(min_int, min.getint());
+}
+
+BOOST_AUTO_TEST_CASE(to_size_t_limited)
+{
+    //constexpr size_t size_t_min{std::numeric_limits<size_t>::min()}; // This causes compiler error ons MSVC when invoking CScriptNum constructor due to narrowing conversion
+    static_assert(std::numeric_limits<size_t>::min() == 0);
+    constexpr int64_t size_t_min{ 0 };
+
+    constexpr size_t size_t_max{static_cast<size_t>(std::numeric_limits<int32_t>::max()) };
+
+    BOOST_CHECK_EQUAL(size_t_min, CScriptNum{size_t_min}.to_size_t_limited());
+    BOOST_CHECK_EQUAL(1, CScriptNum{1}.to_size_t_limited());
+
+    BOOST_CHECK_EQUAL(size_t_min, CScriptNum{bint{size_t_min}}.to_size_t_limited());
+    BOOST_CHECK_EQUAL(1, CScriptNum{bint{1}}.to_size_t_limited());
+    BOOST_CHECK_EQUAL(size_t_max, CScriptNum{bint{size_t_max}}.to_size_t_limited());
 }
 
 // clang-format off
@@ -573,7 +614,7 @@ BOOST_AUTO_TEST_CASE(minimize_encoding_test) {
 
     // Check that positive and negative zeros encode to nothing.
     std::vector<uint8_t> zero, negZero;
-    for (size_t i = 0; i < MAX_SCRIPT_ELEMENT_SIZE; i++) {
+    for (size_t i = 0; i < MAX_SCRIPT_ELEMENT_SIZE_BEFORE_GENESIS; i++) {
         zero.push_back(0x00);
         CheckMinimalyEncode(zero, {});
 
@@ -587,7 +628,7 @@ BOOST_AUTO_TEST_CASE(minimize_encoding_test) {
     // Keep one leading zero when sign bit is used.
     std::vector<uint8_t> n{0x80, 0x00}, negn{0x80, 0x80};
     std::vector<uint8_t> npadded = n, negnpadded = negn;
-    for (size_t i = 0; i < MAX_SCRIPT_ELEMENT_SIZE; i++) {
+    for (size_t i = 0; i < MAX_SCRIPT_ELEMENT_SIZE_BEFORE_GENESIS; i++) {
         CheckMinimalyEncode(npadded, n);
         npadded.push_back(0x00);
 
@@ -599,7 +640,7 @@ BOOST_AUTO_TEST_CASE(minimize_encoding_test) {
     // Mege leading byte when sign bit isn't used.
     std::vector<uint8_t> k{0x7f}, negk{0xff};
     std::vector<uint8_t> kpadded = k, negkpadded = negk;
-    for (size_t i = 0; i < MAX_SCRIPT_ELEMENT_SIZE; i++) {
+    for (size_t i = 0; i < MAX_SCRIPT_ELEMENT_SIZE_BEFORE_GENESIS; i++) {
         CheckMinimalyEncode(kpadded, k);
         kpadded.push_back(0x00);
 

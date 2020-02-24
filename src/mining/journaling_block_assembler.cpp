@@ -74,13 +74,25 @@ std::unique_ptr<CBlockTemplate> JournalingBlockAssembler::CreateNewBlock(const C
     LogPrintf("JournalingBlockAssembler::CreateNewBlock(): total size: %u txs: %u fees: %ld sigops %d\n",
         serializeSize, block->vtx.size() - 1, mBlockFees, mBlockSigOps);
 
+    bool isGenesisEnabled = IsGenesisEnabled(mConfig, chainActive.Height() + 1);
+    bool sigOpCountError;
+
     // Build template
     std::unique_ptr<CBlockTemplate> blockTemplate { std::make_unique<CBlockTemplate>(block) };
     blockTemplate->vTxFees = mTxFees;
     blockTemplate->vTxSigOpsCount = mTxSigOpsCount;
     blockTemplate->vTxFees[0] = -1 * mBlockFees;
-    blockTemplate->vTxSigOpsCount[0] = GetSigOpCountWithoutP2SH(*block->vtx[0]);
 
+    int64_t txSigOpCount = static_cast<int64_t>(GetSigOpCountWithoutP2SH(*block->vtx[0], isGenesisEnabled, sigOpCountError));
+    // This can happen if supplied coinbase scriptPubKeyIn contains multisig with too many public keys
+    if (sigOpCountError)
+    {
+        blockTemplate = nullptr;
+    }
+    else
+    {
+        blockTemplate->vTxSigOpsCount[0] = txSigOpCount;
+    }
     // Can now update callers pindexPrev
     pindexPrev = pindexPrevNew;
     mRecentlyUpdated = false;
@@ -134,12 +146,15 @@ void JournalingBlockAssembler::threadBlockUpdate() noexcept
 // Update our block template with some new transactions - Caller holds mutex
 void JournalingBlockAssembler::updateBlock(const CBlockIndex* pindex)
 {
+    size_t txnNum {0};
+
     try
     {
         // Update chain state
         if(pindex)
         {
-            mLockTimeCutoff = (STANDARD_LOCKTIME_VERIFY_FLAGS & LOCKTIME_MEDIAN_TIME_PAST) ?
+            int height { pindex->nHeight + 1 };
+            mLockTimeCutoff = (StandardNonFinalVerifyFlags(IsGenesisEnabled(mConfig, height)) & LOCKTIME_MEDIAN_TIME_PAST) ?
                 pindex->GetMedianTimePast() : GetAdjustedTime();
         }
 
@@ -149,13 +164,12 @@ void JournalingBlockAssembler::updateBlock(const CBlockIndex* pindex)
         // Does our journal or iterator need replacing?
         while(!mJournal->getCurrent() || !mJournalPos.valid())
         {
+            // Release old lock, update journal/block, take new lock
+            journalLock = CJournal::ReadLock {};
             newBlock();
-            // make sure that we don't lock the same journal twice as that is
-            // not allowed by the standard and can cause a deadlock
-            if(!journalLock.IsSame(mJournal))
-            {
-                journalLock = CJournal::ReadLock { mJournal };
-            }
+            journalLock = CJournal::ReadLock { mJournal };
+
+            // Reset our position to the start of the journal
             mJournalPos = journalLock.begin();
         }
 
@@ -165,7 +179,6 @@ void JournalingBlockAssembler::updateBlock(const CBlockIndex* pindex)
 
         // Read and process transactions from the journal until either we've done as many
         // as we allow this go or we reach the end of the journal.
-        size_t txnNum {0};
         bool finished { mJournalPos == journalLock.end() };
         while(!finished)
         {
@@ -184,15 +197,15 @@ void JournalingBlockAssembler::updateBlock(const CBlockIndex* pindex)
                 finished = true;
             }
         }
-
-        if(txnNum > 0)
-        {
-            LogPrint(BCLog::JOURNAL, "JournalingBlockAssembler processed %d transactions from the journal\n", txnNum);
-        }
     }
     catch(std::exception& e)
     {
         LogPrint(BCLog::JOURNAL, "JournalingBlockAssembler caught: %s\n", e.what());
+    }
+
+    if(txnNum > 0)
+    {
+        LogPrint(BCLog::JOURNAL, "JournalingBlockAssembler processed %d transactions from the journal\n", txnNum);
     }
 }
 
@@ -246,20 +259,26 @@ bool JournalingBlockAssembler::addTransaction(const CBlockIndex* pindex)
         return false;
     }
 
-    // Check sig ops count
-    uint64_t maxBlockSigOps { GetMaxBlockSigOpsCount(blockSizeWithTx) };
-    uint64_t txnSigOps { static_cast<uint64_t>(entry.getSigOpsCount()) };
-    uint64_t blockSigOpsWithTx { mBlockSigOps + txnSigOps };
-    if(blockSigOpsWithTx >= maxBlockSigOps)
+    uint64_t txnSigOps{ static_cast<uint64_t>(entry.getSigOpsCount()) };
+    uint64_t blockSigOpsWithTx{ mBlockSigOps + txnSigOps };
+
+    // After Genesis we don't count sigops anymore
+    if (!IsGenesisEnabled(mConfig, pindex->nHeight + 1))
     {
-        return false;
+        // Check sig ops count
+        uint64_t maxBlockSigOps = mConfig.GetMaxBlockSigOpsConsensusBeforeGenesis(blockSizeWithTx);
+     
+        if (blockSigOpsWithTx >= maxBlockSigOps)
+        {
+            return false;
+        }
     }
 
     // Must check that lock times are still valid
     if(pindex)
     {
         CValidationState state {};
-        if(!ContextualCheckTransaction(mConfig, *txn, state, pindex->nHeight + 1, mLockTimeCutoff))
+        if(!ContextualCheckTransaction(mConfig, *txn, state, pindex->nHeight + 1, mLockTimeCutoff, false))
         {
             return false;
         }

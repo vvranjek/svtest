@@ -14,9 +14,11 @@ Running
 ---------------------
 Bitcoin SV is only supported on the Unix platform at this time.
 
-To run Bitcoin SV, unpack the files into a directory and run:
+To run Bitcoin SV:
 
-- `bin/bitcoind`
+* ensure that your system meets the minimum recommended [system requirements](https://bitcoinsv.io/2019/08/02/bitcoin-sv-node-system-requirements/)
+* unpack the files into a directory
+* run `bin/bitcoind`
 
 ### Need Help?
 

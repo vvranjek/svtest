@@ -9,6 +9,7 @@
 #include "crypto/common.h"
 #include "prevector.h"
 #include "serialize.h"
+#include "consensus/consensus.h"
 
 #include <cassert>
 #include <climits>
@@ -19,17 +20,11 @@
 #include <string>
 #include <vector>
 
-// Maximum number of bytes pushable to the stack
-static const unsigned int MAX_SCRIPT_ELEMENT_SIZE = 520;
+// Maximum number of bytes pushable to the stack -- replaced with DEFAULT_STACK_MEMORY_USAGE after Genesis
+static const unsigned int MAX_SCRIPT_ELEMENT_SIZE_BEFORE_GENESIS = 520;
 
-// Maximum number of non-push operations per script
-static const int MAX_OPS_PER_SCRIPT = 500;
-
-// Maximum number of public keys per multisig
-static const int MAX_PUBKEYS_PER_MULTISIG = 20;
-
-// Maximum script length in bytes
-static const int MAX_SCRIPT_SIZE = 10000;
+// Maximum number of elements on the stack -- replaced with DEFAULT_STACK_MEMORY_USAGE after Genesis
+static const unsigned int MAX_STACK_ELEMENTS_BEFORE_GENESIS = 1000;
 
 // Threshold for nLockTime: below this value it is interpreted as block number,
 // otherwise as UNIX timestamp. Thresold is Tue Nov 5 00:53:20 1985 UTC
@@ -384,14 +379,20 @@ public:
      * pay-to-script-hash, that changed: CHECKMULTISIGs serialized in scriptSigs
      * are counted more accurately, assuming they are of the form
      *  ... OP_N CHECKMULTISIG ...
+     *
+     * After Genesis all sigops are counted accuratelly no matter how the flag is 
+     * set. More than 16 pub keys are supported, but the size of the number representing
+     * number of public keys must not be bigger than CScriptNum::MAXIMUM_ELEMENT_SIZE bytes.
+     * If the size is bigger than that, or if the number of public keys is negative,
+     * sigOpCountError is set to true,
      */
-    unsigned int GetSigOpCount(bool fAccurate) const;
+    uint64_t GetSigOpCount(bool fAccurate, bool isGenesisEnabled, bool& sigOpCountError) const;
 
     /**
      * Accurately count sigOps, including sigOps in pay-to-script-hash
      * transactions:
      */
-    unsigned int GetSigOpCount(const CScript &scriptSig) const;
+    uint64_t GetSigOpCount(const CScript &scriptSig, bool isGenesisEnabled, bool& sigOpCountError) const;
 
     bool IsPayToScriptHash() const;
     bool IsWitnessProgram(int &version, std::vector<uint8_t> &program) const;
@@ -405,11 +406,44 @@ public:
      * Returns whether the script is guaranteed to fail at execution, regardless
      * of the initial stack. This allows outputs to be pruned instantly when
      * entering the UTXO set.
+     * nHeight reflects the height of the block that script was mined in
+     * For Genesis OP_RETURN this can return false negatives. For example if we have:
+     *   <some complex script that always return OP_FALSE> OP_RETURN
+     * this function will return false even though the ouput is unspendable.
+     * 
      */
-    bool IsUnspendable() const {
+
+    bool IsUnspendable(bool isGenesisEnabled) const {
+        if (isGenesisEnabled)
+        {
+            // Genesis restored OP_RETURN functionality. It no longer uncoditionally fails execution
+            // The top stack value determines if execution suceeds, and OP_RETURN lock script might be spendable if 
+            // unlock script pushes non 0 value to the stack.
+
+            // We currently only detect OP_FALSE OP_RETURN as provably unspendable.
+            return  (size() > 1 && *begin() == OP_FALSE && *(begin() + 1) == OP_RETURN);
+        }
+        else
+        {
+            return (size() > 0 && *begin() == OP_RETURN) ||
+                (size() > 1 && *begin() == OP_FALSE && *(begin() + 1) == OP_RETURN) ||
+                (size() > MAX_SCRIPT_SIZE_BEFORE_GENESIS);
+        }
+    }
+
+    /**
+     * Returns whether the script looks like a known OP_RETURN script. This is similar to IsUnspendable()
+     * but it does not require nHeight. 
+     * Use cases:
+     *   - decoding transactions to avoid parsing OP_RETURN as other data
+     *   - used in wallet for:
+     *   -   for extracting addresses (we do not now how to do that for OP_RETURN) 
+     *   -   logging unsolvable transactions that contain OP_RETURN
+     */
+    bool IsKnownOpReturn() const
+    {
         return (size() > 0 && *begin() == OP_RETURN) ||
-               (size() > 1 && *begin() == OP_FALSE && *(begin() + 1) == OP_RETURN) ||
-               (size() > MAX_SCRIPT_SIZE);
+            (size() > 1 && *begin() == OP_FALSE && *(begin() + 1) == OP_RETURN);        
     }
 
     void clear() {

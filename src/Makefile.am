@@ -93,12 +93,14 @@ BITCOIN_CORE_H = \
   blockencodings.h \
   blockfileinfostore.h \
   blockstreams.h \
+  blockvalidation.h \
   chain.h \
   chainparams.h \
   chainparamsbase.h \
   chainparamsseeds.h \
   checkpoints.h \
   checkqueue.h \
+  checkqueuepool.h \
   clientversion.h \
   coins.h \
   compat.h \
@@ -122,6 +124,7 @@ BITCOIN_CORE_H = \
   keystore.h \
   dbwrapper.h \
   limitedmap.h \
+  locked_ref.h \
   logging.h \
   memusage.h \
   merkleblock.h \
@@ -134,7 +137,6 @@ BITCOIN_CORE_H = \
   mining/journal_entry.h \
   mining/journaling_block_assembler.h \
   mining/legacy.h \
-  mod_pri_queue.h \
   net.h \
   net_processing.h \
   netaddress.h \
@@ -150,13 +152,16 @@ BITCOIN_CORE_H = \
   reverselock.h \
   rpc/blockchain.h \
   rpc/client.h \
+  rpc/jsonwriter.h \
   rpc/mining.h \
   rpc/misc.h \
   rpc/protocol.h \
   rpc/server.h \
   rpc/tojson.h \
   rpc/register.h \
+  rpc/text_writer.h \
   scheduler.h \
+  script_config.h \
   script/scriptcache.h \
   script/sigcache.h \
   script/sign.h \
@@ -170,15 +175,19 @@ BITCOIN_CORE_H = \
   support/lockedpool.h \
   sync.h \
   task.h \
+  taskcancellation.h \
   task_helpers.h \
   threadpool.h \
   threadpoolT.h \
+  threadpriority.h \
   threadsafety.h \
   threadinterrupt.h \
   timedata.h \
+  time_locked_mempool.h \
   torcontrol.h \
   txdb.h \
   txmempool.h \
+  tx_mempool_info.h \
   txn_double_spend_detector.h \
   txn_handlers.h \
   txn_propagator.h \
@@ -263,9 +272,11 @@ libbitcoin_server_a_SOURCES = \
   script/sigcache.cpp \
   script/ismine.cpp \
   timedata.cpp \
+  time_locked_mempool.cpp \
   torcontrol.cpp \
   txdb.cpp \
   txmempool.cpp \
+  tx_mempool_info.cpp \
   txn_double_spend_detector.cpp \
   txn_propagator.cpp \
   txn_validation_data.cpp \
@@ -327,13 +338,14 @@ crypto_libbitcoin_crypto_a_SOURCES += crypto/sha256_sse4.cpp
 endif
 
 # consensus: shared between all executables that validate any consensus rules.
-libbitcoin_consensus_a_CPPFLAGS = $(AM_CPPFLAGS) $(BITCOIN_INCLUDES)
-libbitcoin_consensus_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
+libbitcoin_consensus_a_CPPFLAGS = $(AM_CPPFLAGS) $(OPENSSL_INCLUDES) $(OPENSSL_LDFLAGS) $(OPENSSL_LIBS) $(BITCOIN_INCLUDES)
+libbitcoin_consensus_a_CXXFLAGS = $(AM_CXXFLAGS) $(OPENSSL_INCLUDES) $(OPENSSL_LDFLAGS) $(OPENSSL_LIBS) $(PIE_FLAGS)
 libbitcoin_consensus_a_SOURCES = \
   amount.h \
   arith_uint256.cpp \
   arith_uint256.h \
   big_int.cpp \
+  big_int.h \
   consensus/merkle.cpp \
   consensus/merkle.h \
   consensus/params.h \
@@ -351,9 +363,13 @@ libbitcoin_consensus_a_SOURCES = \
   script/sighashtype.h \
   script/interpreter.cpp \
   script/interpreter.h \
+  script/int_serialization.h \
+  script/limitedstack.cpp \
+  script/limitedstack.h \
   script/script_flags.h \
   script/script.cpp \
   script/script_num.cpp \
+  script/script_num.h \
   script/script.h \
   script/script_error.cpp \
   script/script_error.h \
@@ -383,6 +399,7 @@ libbitcoin_common_a_SOURCES = \
   netaddress.cpp \
   netbase.cpp \
   protocol.cpp \
+  rpc/jsonwriter.cpp \
   scheduler.cpp \
   script/sign.cpp \
   script/standard.cpp \
@@ -408,6 +425,7 @@ libbitcoin_util_a_SOURCES = \
   support/cleanse.cpp \
   sync.cpp \
   threadinterrupt.cpp \
+  threadpriority.cpp \
   uint256.cpp \
   uint256.h \
   util.cpp \
@@ -472,8 +490,7 @@ bitcoind_LDADD = \
 bitcoind_LDADD += \
   $(BOOST_LIBS) \
   $(BDB_LIBS) \
-  $(SSL_LIBS) \
-  $(CRYPTO_LIBS) \
+  $(OPENSSL_LIBS) \
   $(MINIUPNPC_LIBS) \
   $(EVENT_PTHREADS_LIBS) \
   $(EVENT_LIBS) \
@@ -496,7 +513,7 @@ bitcoin_cli_LDADD = \
   $(LIBBITCOIN_UTIL) \
   $(LIBBITCOIN_CRYPTO)
 
-bitcoin_cli_LDADD += $(BOOST_LIBS) $(SSL_LIBS) $(CRYPTO_LIBS) $(EVENT_LIBS)
+bitcoin_cli_LDADD += $(BOOST_LIBS) $(OPENSSL_LIBS) $(EVENT_LIBS)
 #
 
 # bitcoin-seeder binary #
@@ -511,7 +528,7 @@ bitcoin_seeder_LDADD = \
   $(LIBBITCOIN_UTIL) \
   $(LIBBITCOIN_CRYPTO)
 
-bitcoin_seeder_LDADD += $(BOOST_LIBS) $(CRYPTO_LIBS)
+bitcoin_seeder_LDADD += $(BOOST_LIBS) $(OPENSSL_LIBS)
 #
 
 # bitcoin-tx binary #
@@ -532,7 +549,7 @@ bitcoin_tx_LDADD = \
   $(LIBBITCOIN_CRYPTO) \
   $(LIBSECP256K1)
 
-bitcoin_tx_LDADD += $(BOOST_LIBS) $(CRYPTO_LIBS)
+bitcoin_tx_LDADD += $(BOOST_LIBS) $(OPENSSL_LIBS)
 #
 
 # bitcoin-miner binary #
@@ -556,7 +573,7 @@ bitcoin_miner_LDADD = \
   $(LIBUNIVALUE) \
   $(LIBBITCOIN_UTIL)
  
-bitcoin_miner_LDADD += $(BOOST_LIBS) $(SSL_LIBS) $(CRYPTO_LIBS) $(EVENT_LIBS)
+bitcoin_miner_LDADD += $(BOOST_LIBS) $(OPENSSL_LIBS) $(EVENT_LIBS)
 #
 
 # bitcoinconsensus library #
@@ -570,8 +587,8 @@ endif
 
 libbitcoinconsensus_la_LDFLAGS = $(AM_LDFLAGS) -no-undefined $(RELDFLAGS)
 libbitcoinconsensus_la_LIBADD = $(LIBSECP256K1)
-libbitcoinconsensus_la_CPPFLAGS = $(AM_CPPFLAGS) -I$(builddir)/obj -I$(srcdir)/secp256k1/include -DBUILD_BITCOIN_INTERNAL
-libbitcoinconsensus_la_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
+libbitcoinconsensus_la_CPPFLAGS = $(AM_CPPFLAGS) $(BITCOIN_INCLUDES) $(OPENSSL_INCLUDES) $(OPENSSL_LDFLAGS) $(OPENSSL_LIBS) -I$(builddir)/obj -I$(srcdir)/secp256k1/include -DBUILD_BITCOIN_INTERNAL
+libbitcoinconsensus_la_CXXFLAGS = $(AM_CXXFLAGS) $(BITCOIN_INCLUDES) $(OPENSSL_INCLUDES) $(OPENSSL_LDFLAGS) $(OPENSSL_LIBS) $(PIE_FLAGS)
 
 endif
 #

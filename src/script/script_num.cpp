@@ -40,7 +40,7 @@ CScriptNum::CScriptNum(const vector<uint8_t>& vch,
     else if(vch.size() <= nMaxNumSize)
     {
         if(big_int)
-            m_value = bsv::deserialize<bint>(begin(vch), end(vch));
+            m_value = bsv::bint::deserialize(vch);
         else
             m_value = bsv::deserialize<int64_t>(begin(vch), end(vch));
     }
@@ -216,33 +216,65 @@ std::ostream& operator<<(std::ostream& os, const CScriptNum& n)
     return os;
 }
 
-int CScriptNum::getint() const
-{
-    static_assert(variant_size_v<CScriptNum::value_type> == 2);
-    assert(m_value.index() == 0);
-
-    const int64_t n = get<0>(m_value);
-    if(n > std::numeric_limits<int>::max())
-        return std::numeric_limits<int>::max();
-    else if(n < std::numeric_limits<int>::min())
-        return std::numeric_limits<int>::min();
-    else
-        return n;
-}
-
 namespace
 {
     // overload is expected to be standardized in C++23
-    // see C++17 The Complete Guide, Chapter 14.1, Nico Josuttis 
+    // see C++17 The Complete Guide, Chapter 14.1, Nico Josuttis
     // or  Functional Programming in C++, Chapter 9.3, Ivan Cukic
-    template<typename... Ts>
-    struct overload : Ts...         // inherit from variadic template arguments
+    template <typename... Ts>
+    struct overload : Ts... // inherit from variadic template arguments
     {
-        using Ts::operator()...;    // 'use' all base type function call operators 
+        using Ts::operator()...; // 'use' all base type function call operators
     };
     // Deduction guide so base types are deduced from passed arguments
-    template<typename... Ts>
+    template <typename... Ts>
     overload(Ts...)->overload<Ts...>;
+}
+
+int CScriptNum::getint() const
+{
+    static_assert(variant_size_v<CScriptNum::value_type> == 2);
+
+    return std::visit(overload{[](const bsv::bint& n) -> int {
+                                   static const bint bn_int_min{
+                                       std::numeric_limits<int>::min()};
+                                   static const bint bn_int_max{
+                                       std::numeric_limits<int>::max()};
+
+                                   if(n > bn_int_max)
+                                       return std::numeric_limits<int>::max();
+                                   else if(n < bn_int_min)
+                                       return std::numeric_limits<int>::min();
+                                   else
+                                       return bsv::to_long(n);
+                               },
+                               [](const int64_t n) {
+                                   if(n > std::numeric_limits<int>::max())
+                                       return std::numeric_limits<int>::max();
+                                   else if(n < std::numeric_limits<int>::min())
+                                       return std::numeric_limits<int>::min();
+                                   else
+                                       return static_cast<int>(n);
+                               }},
+                      m_value);
+}
+
+size_t CScriptNum::to_size_t_limited() const
+{
+    static_assert(variant_size_v<CScriptNum::value_type> == 2);
+
+    return std::visit(overload{[](const bsv::bint& n) {
+                                   //we are using int32_t because this is minimum supported size in Windows and Linux based compiler
+                                   assert(n >= 0 && n <= std::numeric_limits<int32_t>::max());
+                                   return bsv::to_size_t_limited(n);
+                               },
+                               [](const int64_t n) {
+                                   //we are using int32_t because this is minimum supported size in Windows and Linux based compiler
+                                   assert(n >= 0 && n <= std::numeric_limits<int32_t>::max());
+                                   // n <= numeric_limits<size_t>::max());
+                                   return size_t(n);
+                               }},
+                      m_value);
 }
 
 
@@ -253,10 +285,7 @@ vector<uint8_t> CScriptNum::getvch() const
     // clang-format off
     return std::visit(overload{[](const bsv::bint& n) 
                       {
-                          vector<uint8_t> v;
-                          v.reserve(n.size_bytes());
-                          bsv::serialize(n, back_inserter(v));
-                          return v;
+                          return n.serialize();
                       },
                       [](const auto& n) 
                       {

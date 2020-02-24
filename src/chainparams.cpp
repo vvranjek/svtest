@@ -17,6 +17,10 @@
 
 #include "chainparamsseeds.h"
 
+#define GENESIS_ACTIVATION_MAIN                 620538
+#define GENESIS_ACTIVATION_STN                  14896
+#define GENESIS_ACTIVATION_TESTNET              1344302
+#define GENESIS_ACTIVATION_REGTEST              10000
 
 static CBlock CreateGenesisBlock(const char *pszTimestamp,
                                  const CScript &genesisOutputScript,
@@ -124,6 +128,9 @@ public:
         // November 13, 2017 hard fork
         consensus.daaHeight = 504031;
 
+        // February 2020, Genesis Upgrade
+        consensus.genesisHeight = GENESIS_ACTIVATION_MAIN;
+
         /**
          * The message start string is designed to be unlikely to occur in
          * normal data. The characters are rarely used upper ASCII, not valid as
@@ -226,10 +233,8 @@ public:
         defaultBlockSizeParams = DefaultBlockSizeParams{
             // activation time 
             MAIN_NEW_BLOCKSIZE_ACTIVATION_TIME,
-            // max block size before activation
-            MAIN_DEFAULT_MAX_BLOCK_SIZE_BEFORE,
-            // max block size after activation
-            MAIN_DEFAULT_MAX_BLOCK_SIZE_AFTER,
+            // max block size
+            MAIN_DEFAULT_MAX_BLOCK_SIZE,
             // max generated block size before activation
             MAIN_DEFAULT_MAX_GENERATED_BLOCK_SIZE_BEFORE,
             // max generated block size after activation
@@ -265,7 +270,9 @@ public:
         consensus.powLimit = uint256S("00000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         consensus.nPowTargetTimespan = 14 * 24 * 60 * 60; // two weeks
         consensus.nPowTargetSpacing = 10 * 60;
-        consensus.fPowAllowMinDifficultyBlocks = true;
+        // Do not allow min difficulty blocks after some time has elapsed
+        consensus.fPowAllowMinDifficultyBlocks = false;
+
         consensus.fPowNoRetargeting = false;
         consensus.nRuleChangeActivationThreshold = 1916; // 95% of 2016
         consensus.nMinerConfirmationWindow = 144; // fast
@@ -278,6 +285,9 @@ public:
 
         // November 13, 2017 hard fork
         consensus.daaHeight = 2200;     // must be > 2016 - see assert in pow.cpp:268
+
+        // February 2020, Genesis Upgrade
+        consensus.genesisHeight = GENESIS_ACTIVATION_STN;
 
         /**
          * The message start string is designed to be unlikely to occur in
@@ -314,18 +324,14 @@ public:
 
         checkpointData = {  { 
                 {0, uint256S("000000000933ea01ad0ee984209779baaec3ced90fa3f408719526f8d77f4943")},
-                {1, uint256S("000000008908135d180edfe727f4e5dfaea25ed8d72337358d8362df7609b974")},
-                {2301, uint256S("00000000ff0ccf61bb239deb3998bd1a9c71d14c212c3fd58b32aae5ab6eaefb")},
-                {2951, uint256S("0000000076b49c5857b2daf2b363478a799f95a18852155113bbace94321b0d0")}
+                {1, uint256S("00000000e23f9436cc8a6d6aaaa515a7b84e7a1720fc9f92805c0007c77420c4")}
         }};
 
         defaultBlockSizeParams = DefaultBlockSizeParams{
             // activation time 
             STN_NEW_BLOCKSIZE_ACTIVATION_TIME,
-            // max block size before activation
-            STN_DEFAULT_MAX_BLOCK_SIZE_BEFORE,
-            // max block size after activation
-            STN_DEFAULT_MAX_BLOCK_SIZE_AFTER,
+            // max block size
+            STN_DEFAULT_MAX_BLOCK_SIZE,
             // max generated block size before activation
             STN_DEFAULT_MAX_GENERATED_BLOCK_SIZE_BEFORE,
             // max generated block size after activation
@@ -379,6 +385,9 @@ public:
 
         // November 13, 2017 hard fork
         consensus.daaHeight = 1188697;
+
+        // February 2020, Genesis Upgrade
+        consensus.genesisHeight = GENESIS_ACTIVATION_TESTNET;
 
         diskMagic[0] = 0x0b;
         diskMagic[1] = 0x11;
@@ -441,10 +450,8 @@ public:
         defaultBlockSizeParams = DefaultBlockSizeParams{
             // activation time 
             TESTNET_NEW_BLOCKSIZE_ACTIVATION_TIME,
-            // max block size before activation
-            TESTNET_DEFAULT_MAX_BLOCK_SIZE_BEFORE,
-            // max block size after activation
-            TESTNET_DEFAULT_MAX_BLOCK_SIZE_AFTER,
+            // max block size
+            TESTNET_DEFAULT_MAX_BLOCK_SIZE,
             // max generated block size before activation
             TESTNET_DEFAULT_MAX_GENERATED_BLOCK_SIZE_BEFORE,
             // max generated block size after activation
@@ -498,6 +505,9 @@ public:
         // November 13, 2017 hard fork is always on on regtest.
         consensus.daaHeight = 0;
 
+        // February 2020, Genesis Upgrade
+        consensus.genesisHeight = GENESIS_ACTIVATION_REGTEST;
+
         diskMagic[0] = 0xfa;
         diskMagic[1] = 0xbf;
         diskMagic[2] = 0xb5;
@@ -544,10 +554,8 @@ public:
         defaultBlockSizeParams = DefaultBlockSizeParams{
             // activation time 
             REGTEST_NEW_BLOCKSIZE_ACTIVATION_TIME,
-            // max block size before activation
-            REGTEST_DEFAULT_MAX_BLOCK_SIZE_BEFORE,
-            // max block size after activation
-            REGTEST_DEFAULT_MAX_BLOCK_SIZE_AFTER,
+            // max block size
+            REGTEST_DEFAULT_MAX_BLOCK_SIZE,
             // max generated block size before activation
             REGTEST_DEFAULT_MAX_GENERATED_BLOCK_SIZE_BEFORE,
             // max generated block size after activation

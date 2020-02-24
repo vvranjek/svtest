@@ -18,6 +18,7 @@
 #include "primitives/transaction.h"
 #include "script/script.h"
 #include "script/sign.h"
+#include "taskcancellation.h"
 #include "univalue.h"
 #include "util.h"
 #include "utilmoneystr.h"
@@ -26,10 +27,14 @@
 #include <cstdio>
 
 #include <boost/algorithm/string.hpp>
+#include "config.h"
 
 static bool fCreateBlank;
 static std::map<std::string, UniValue> registers;
 static const int CONTINUE_EXECUTION = -1;
+
+// not in use but required by config.h dependency
+bool fRequireStandard = true;
 
 //
 // This function returns either one of EXIT_ codes when it's expected to stop
@@ -87,22 +92,16 @@ static int AppInitRawTx(int argc, char *argv[]) {
                                    _("Add address-based output to TX"));
         strUsage +=
             HelpMessageOpt("outpubkey=VALUE:PUBKEY[:FLAGS]",
-                           _("Add pay-to-pubkey output to TX") + ". " +
-                               _("Optionally add the \"S\" flag to wrap the "
-                                 "output in a pay-to-script-hash."));
+                           _("Add pay-to-pubkey output to TX"));
         strUsage += HelpMessageOpt("outdata=[VALUE:]DATA",
                                    _("Add data-based output to TX"));
         strUsage +=
             HelpMessageOpt("outscript=VALUE:SCRIPT[:FLAGS]",
-                           _("Add raw script output to TX") + ". " +
-                               _("Optionally add the \"S\" flag to wrap the "
-                                 "output in a pay-to-script-hash."));
+                           _("Add raw script output to TX"));
         strUsage += HelpMessageOpt(
             "outmultisig=VALUE:REQUIRED:PUBKEYS:PUBKEY1:PUBKEY2:....[:FLAGS]",
             _("Add Pay To n-of-m Multi-sig output to TX. n = REQUIRED, m = "
-              "PUBKEYS") +
-                ". " + _("Optionally add the \"S\" flag to wrap the output in "
-                         "a pay-to-script-hash."));
+              "PUBKEYS"));
         strUsage += HelpMessageOpt(
             "sign=SIGHASH-FLAGS",
             _("Add zero or more signatures to transaction") + ". " +
@@ -245,7 +244,7 @@ static void MutateTxAddInput(CMutableTransaction &tx,
     TxId txid(uint256S(strTxid));
 
     static const unsigned int minTxOutSz = 9;
-    static const unsigned int maxVout = MAX_TX_SIZE / minTxOutSz;
+    static const unsigned int maxVout = MAX_TX_SIZE_CONSENSUS_AFTER_GENESIS / minTxOutSz; // bitcoin-tx tool can build txs with more vouts than pre Genesis nodes  would accept
 
     // extract and validate vout
     std::string strVout = vStrInputParts[1];
@@ -322,9 +321,7 @@ static void MutateTxAddOutPubKey(CMutableTransaction &tx,
     }
 
     if (bScriptHash) {
-        // Get the ID for the script, and then construct a P2SH destination for
-        // it.
-        scriptPubKey = GetScriptForDestination(CScriptID(scriptPubKey));
+        throw std::runtime_error("P2SH has been deprecated");
     }
 
     // construct TxOut, append to transaction output list
@@ -388,9 +385,7 @@ static void MutateTxAddOutMultiSig(CMutableTransaction &tx,
     CScript scriptPubKey = GetScriptForMultisig(required, pubkeys);
 
     if (bScriptHash) {
-        // Get the ID for the script, and then construct a P2SH destination for
-        // it.
-        scriptPubKey = GetScriptForDestination(CScriptID(scriptPubKey));
+        throw std::runtime_error("P2SH has been deprecated");
     }
 
     // construct TxOut, append to transaction output list
@@ -450,7 +445,7 @@ static void MutateTxAddOutScript(CMutableTransaction &tx,
     }
 
     if (bScriptHash) {
-        scriptPubKey = GetScriptForDestination(CScriptID(scriptPubKey));
+        throw std::runtime_error("P2SH has been deprecated");
     }
 
     // construct TxOut, append to transaction output list
@@ -556,7 +551,7 @@ static Amount AmountFromValue(const UniValue &value) {
     return amount;
 }
 
-static void MutateTxSign(CMutableTransaction &tx, const std::string &flagStr) {
+static void MutateTxSign(const Config& config, CMutableTransaction& tx, const std::string& flagStr) {
     SigHashType sigHashType = SigHashType().withForkId();
 
     if ((flagStr.size() > 0) && !findSigHashFlags(sigHashType, flagStr)) {
@@ -645,7 +640,11 @@ static void MutateTxSign(CMutableTransaction &tx, const std::string &flagStr) {
                 txout.nValue = AmountFromValue(prevOut["amount"]);
             }
 
-            view.AddCoin(out, Coin(txout, 1, false), true);
+            // We do not have coin height here. We assume that both coin height
+            // and Genesis activation height is 1, effectively using Genesis rules. 
+            // This basically means, that output script starting with OP_RETURN will
+            // be treated as possibly spendable.
+            view.AddCoin(out, Coin(txout, 1, false), true, 1);
         }
 
         // If redeemScript given and private keys given, add redeemScript to the
@@ -673,28 +672,46 @@ static void MutateTxSign(CMutableTransaction &tx, const std::string &flagStr) {
         const CScript &prevPubKey = coin.GetTxOut().scriptPubKey;
         const Amount amount = coin.GetTxOut().nValue;
 
+        // we will assume that script is after genesis for every script type except p2sh
+        bool assumeUtxoAfterGenesis = prevPubKey.IsPayToScriptHash() ? false : true;
+
         SignatureData sigdata;
         // Only sign SIGHASH_SINGLE if there's a corresponding output:
         if ((sigHashType.getBaseType() != BaseSigHashType::SINGLE) ||
             (i < mergedTx.vout.size())) {
-            ProduceSignature(MutableTransactionSignatureCreator(
+            ProduceSignature(config, 
+                             true, 
+                             MutableTransactionSignatureCreator(
                                  &keystore, &mergedTx, i, amount, sigHashType),
+                             true, assumeUtxoAfterGenesis, 
                              prevPubKey, sigdata);
         }
 
         // ... and merge in other signatures:
         for (const CTransaction &txv : txVariants) {
-            sigdata = CombineSignatures(
+            sigdata = CombineSignatures(config, 
+                true,
                 prevPubKey,
                 MutableTransactionSignatureChecker(&mergedTx, i, amount),
-                sigdata, DataFromTransaction(txv, i));
+                sigdata, 
+                DataFromTransaction(txv, i),
+                assumeUtxoAfterGenesis);
         }
 
         UpdateTransaction(mergedTx, i, sigdata);
 
-        if (!VerifyScript(
-                txin.scriptSig, prevPubKey, STANDARD_SCRIPT_VERIFY_FLAGS,
-                MutableTransactionSignatureChecker(&mergedTx, i, amount))) {
+        auto source = task::CCancellationSource::Make();
+        auto res =
+            VerifyScript(
+                config, true,
+                source->GetToken(),
+                txin.scriptSig,
+                prevPubKey,
+                StandardScriptVerifyFlags(true, assumeUtxoAfterGenesis),
+                MutableTransactionSignatureChecker(&mergedTx, i, amount));
+
+        if (!res.value())
+        {
             fComplete = false;
         }
     }
@@ -715,9 +732,9 @@ public:
     ~Secp256k1Init() { ECC_Stop(); }
 };
 
-static void MutateTx(CMutableTransaction &tx, const std::string &command,
-                     const std::string &commandVal,
-                     const CChainParams &chainParams) {
+static void MutateTx(const Config& config, CMutableTransaction& tx, const std::string& command,
+                     const std::string& commandVal,
+                     const CChainParams& chainParams) {
     std::unique_ptr<Secp256k1Init> ecc;
 
     if (command == "nversion") {
@@ -745,7 +762,7 @@ static void MutateTx(CMutableTransaction &tx, const std::string &command,
             ecc.reset(new Secp256k1Init());
         }
 
-        MutateTxSign(tx, commandVal);
+        MutateTxSign(config, tx, commandVal);
     } else if (command == "load") {
         RegisterLoad(commandVal);
     } else if (command == "set") {
@@ -756,11 +773,15 @@ static void MutateTx(CMutableTransaction &tx, const std::string &command,
 }
 
 static void OutputTxJSON(const CTransaction &tx) {
-    UniValue entry(UniValue::VOBJ);
-    TxToUniv(tx, uint256(), entry);
 
-    std::string jsonOutput = entry.write(4);
-    fprintf(stdout, "%s\n", jsonOutput.c_str());
+    //treat as after genesis if no output is P2SH
+    bool genesisEnabled = std::none_of(tx.vout.begin(), tx.vout.end(), [](const CTxOut& out) { return out.scriptPubKey.IsPayToScriptHash(); });
+
+    CStringWriter strWriter;
+    CJSONWriter jWriter(strWriter, true);
+    TxToJSON(tx, uint256(), genesisEnabled, 0, jWriter);
+
+    fprintf(stdout, "%s\n", strWriter.MoveOutString().c_str());
 }
 
 static void OutputTxHash(const CTransaction &tx) {
@@ -811,6 +832,7 @@ static int CommandLineRawTx(int argc, char *argv[],
                             const CChainParams &chainParams) {
     std::string strPrint;
     int nRet = 0;
+    const Config &config = GlobalConfig::GetConfig();
     try {
         // Skip switches; Permit common stdin convention "-"
         while (argc > 1 && IsSwitchChar(argv[1][0]) && (argv[1][1] != 0)) {
@@ -855,7 +877,7 @@ static int CommandLineRawTx(int argc, char *argv[],
                 value = arg.substr(eqpos + 1);
             }
 
-            MutateTx(tx, key, value, chainParams);
+            MutateTx(config, tx, key, value, chainParams);
         }
 
         OutputTx(CTransaction(tx));
