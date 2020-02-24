@@ -185,8 +185,12 @@ struct CNodeState {
     /*
     * Capture the number and frequency of Invalid checksum
     */
+
     double dInvalidChecksumFrequency {0};
     std::chrono::system_clock::time_point nTimeOfLastInvalidChecksumHeader { std::chrono::system_clock::now() };
+
+    double dInvalidHeaderFrequency {0};
+    std::chrono::system_clock::time_point nTimeOfLastHeaderMessage { std::chrono::system_clock::now() };
 
     int64_t nextSendThresholdTime {0};
 
@@ -552,15 +556,13 @@ bool CanDirectFetch(const Consensus::Params &consensusParams) {
 // Requires cs_main
 bool PeerHasHeader(const CNodeStatePtr& state, const CBlockIndex *pindex) {
     AssertLockHeld(cs_main);
+    assert(state);
 
-    if (!pindex) {
-        return false;
-    }
-    else if (state->pindexBestKnownBlock &&
+    if (state->pindexBestKnownBlock &&
         pindex == state->pindexBestKnownBlock->GetAncestor(pindex->nHeight)) {
         return true;
     }
-    else if (state->pindexBestHeaderSent &&
+    if (state->pindexBestHeaderSent &&
         pindex == state->pindexBestHeaderSent->GetAncestor(pindex->nHeight)) {
         return true;
     }
@@ -1983,10 +1985,10 @@ static void ProcessSendHeadersMessage(const CNodePtr& pfrom)
     const CNodeStatePtr& state { stateRef.get() };
     if(state) {
         if(state->fPreferHeaders) {
-            // This message should only be received once. If its already set it might
+            // This message should only be received once. If its already set it might 
             // indicate a misbehaving node. Increase the banscore
-            Misbehaving(pfrom, 1, "Invalid SendHeaders activity");
-            LogPrint(BCLog::NET, "Peer %d sent SendHeaders more than once\n", pfrom->id);
+            Misbehaving(pfrom, 1, "Invalid Header activity");
+            LogPrintf("Peer %d showing increased activity in message header transmission\n",pfrom->id);
         }
         else {
             state->fPreferHeaders = true;
@@ -3698,7 +3700,7 @@ bool ProcessMessages(const Config &config, const CNodePtr& pfrom, CConnman &conn
             const CNodeStatePtr& state { stateRef.get() };
             if (state){
                 auto curTime = std::chrono::system_clock::now();
-                auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(curTime - state->nTimeOfLastInvalidChecksumHeader).count();
+                auto duration =  std::chrono::duration_cast<std::chrono::milliseconds>(state->nTimeOfLastInvalidChecksumHeader - curTime).count();
                 unsigned int interval = gArgs.GetArg("-invalidcsinterval", DEFAULT_MIN_TIME_INTERVAL_CHECKSUM_MS);
                 std::chrono::milliseconds checksumInterval(interval); 
                 if (duration < std::chrono::milliseconds(checksumInterval).count()){
@@ -3927,12 +3929,12 @@ void SendBlockHeaders(const Config &config, const CNodePtr& pto, CConnman &connm
             BlockMap::iterator mi = mapBlockIndex.find(hash);
             assert(mi != mapBlockIndex.end());
             const CBlockIndex *pindex = mi->second;
-            if (pindex && chainActive[pindex->nHeight] != pindex) {
+            if (pindex != nullptr && chainActive[pindex->nHeight] != pindex) {
                 // Bail out if we reorged away from this block
                 fRevertToInv = true;
                 break;
             }
-            if (pindex && pBestIndex && pindex->pprev != pBestIndex) {
+            if (pindex != nullptr && pBestIndex != nullptr && pindex->pprev != pBestIndex) {
                 // This means that the list of blocks to announce don't
                 // connect to each other. This shouldn't really be possible
                 // to hit during regular operation (because reorgs should
@@ -3946,13 +3948,14 @@ void SendBlockHeaders(const Config &config, const CNodePtr& pto, CConnman &connm
                 break;
             }
             pBestIndex = pindex;
-            if (pindex && fFoundStartingHeader) {
+            if (fFoundStartingHeader) {
                 // add this to the headers message
                 vHeaders.push_back(pindex->GetBlockHeader());
             } else if (PeerHasHeader(state, pindex)) {
                 // Keep looking for the first new block.
                 continue;
-            } else if (pindex && (pindex->pprev == nullptr || PeerHasHeader(state, pindex->pprev))) {
+            } else if (pindex->pprev == nullptr ||
+                       PeerHasHeader(state, pindex->pprev)) {
                 // Peer doesn't have this header but they do have the prior
                 // one.
                 // Start sending headers.
@@ -4017,7 +4020,29 @@ void SendBlockHeaders(const Config &config, const CNodePtr& pto, CConnman &connm
                          __func__, vHeaders.front().GetHash().ToString(),
                          pto->id);
             }
-            connman.PushMessage(pto, msgMaker.Make(NetMsgType::HEADERS, vHeaders));
+            // check for high-frequency pushing of header messages
+            auto curTime = std::chrono::system_clock::now();
+            auto duration =  std::chrono::duration_cast<std::chrono::milliseconds>(state->nTimeOfLastHeaderMessage - curTime).count();
+            unsigned int interval = gArgs.GetArg("-invalidheaderinterval", DEFAULT_MIN_TIME_INTERVAL_HEADER_MS );
+            std::chrono::milliseconds headerInterval(interval); 
+            if (duration < std::chrono::milliseconds(headerInterval).count()){
+                ++ state->dInvalidHeaderFrequency;
+            }
+            else { 
+                state->dInvalidHeaderFrequency = 0;
+            }
+            unsigned int headerFreq = gArgs.GetArg ("-invalidheaderfreq", DEFAULT_INVALID_HEADER_FREQUENCY );
+            if (state->dInvalidHeaderFrequency > headerFreq){
+                // MisbehavingNode if the count goes above some chosen value 
+                // 1100 conseqitive invalid checksums received with less than 500ms between them
+                // (this is approximately 2200 messages per second at which point TCP/IP will start to throttle
+                Misbehaving(pto, 1, "Invalid Header activity");
+                LogPrintf("Peer %d showing increased activity in message header transmission\n",pto->id);
+            }
+            // record the time of sending the header. 
+            state->nTimeOfLastHeaderMessage = curTime;
+            connman.PushMessage(
+                pto, msgMaker.Make(NetMsgType::HEADERS, vHeaders));
             state->pindexBestHeaderSent = pBestIndex;
         }
         else {
