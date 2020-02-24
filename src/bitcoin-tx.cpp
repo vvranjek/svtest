@@ -92,16 +92,22 @@ static int AppInitRawTx(int argc, char *argv[]) {
                                    _("Add address-based output to TX"));
         strUsage +=
             HelpMessageOpt("outpubkey=VALUE:PUBKEY[:FLAGS]",
-                           _("Add pay-to-pubkey output to TX"));
+                           _("Add pay-to-pubkey output to TX") + ". " +
+                               _("Optionally add the \"S\" flag to wrap the "
+                                 "output in a pay-to-script-hash."));
         strUsage += HelpMessageOpt("outdata=[VALUE:]DATA",
                                    _("Add data-based output to TX"));
         strUsage +=
             HelpMessageOpt("outscript=VALUE:SCRIPT[:FLAGS]",
-                           _("Add raw script output to TX"));
+                           _("Add raw script output to TX") + ". " +
+                               _("Optionally add the \"S\" flag to wrap the "
+                                 "output in a pay-to-script-hash."));
         strUsage += HelpMessageOpt(
             "outmultisig=VALUE:REQUIRED:PUBKEYS:PUBKEY1:PUBKEY2:....[:FLAGS]",
             _("Add Pay To n-of-m Multi-sig output to TX. n = REQUIRED, m = "
-              "PUBKEYS"));
+              "PUBKEYS") +
+                ". " + _("Optionally add the \"S\" flag to wrap the output in "
+                         "a pay-to-script-hash."));
         strUsage += HelpMessageOpt(
             "sign=SIGHASH-FLAGS",
             _("Add zero or more signatures to transaction") + ". " +
@@ -321,7 +327,9 @@ static void MutateTxAddOutPubKey(CMutableTransaction &tx,
     }
 
     if (bScriptHash) {
-        throw std::runtime_error("P2SH has been deprecated");
+        // Get the ID for the script, and then construct a P2SH destination for
+        // it.
+        scriptPubKey = GetScriptForDestination(CScriptID(scriptPubKey));
     }
 
     // construct TxOut, append to transaction output list
@@ -385,7 +393,9 @@ static void MutateTxAddOutMultiSig(CMutableTransaction &tx,
     CScript scriptPubKey = GetScriptForMultisig(required, pubkeys);
 
     if (bScriptHash) {
-        throw std::runtime_error("P2SH has been deprecated");
+        // Get the ID for the script, and then construct a P2SH destination for
+        // it.
+        scriptPubKey = GetScriptForDestination(CScriptID(scriptPubKey));
     }
 
     // construct TxOut, append to transaction output list
@@ -445,7 +455,7 @@ static void MutateTxAddOutScript(CMutableTransaction &tx,
     }
 
     if (bScriptHash) {
-        throw std::runtime_error("P2SH has been deprecated");
+        scriptPubKey = GetScriptForDestination(CScriptID(scriptPubKey));
     }
 
     // construct TxOut, append to transaction output list
