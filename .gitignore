@@ -62,8 +62,6 @@ src/univalue/gen
 *.lo
 *.la
 
-Makefile
-
 # Unit-tests
 Makefile.test
 junit_results.xml
