@@ -766,7 +766,7 @@ std::string HelpMessage(HelpMessageMode mode) {
             HelpMessageOpt("-limitancestorsize=<n>",
                            strprintf("Do not accept transactions whose size "
                                      "with all in-mempool ancestors exceeds "
-                                     "<n> kilobytes (default: %u)",
+                                     "<n>*1000 bytes (default: %u)",
                                      DEFAULT_ANCESTOR_SIZE_LIMIT));
         strUsage += HelpMessageOpt(
             "-limitdescendantcount=<n>",
@@ -776,7 +776,7 @@ std::string HelpMessage(HelpMessageMode mode) {
         strUsage += HelpMessageOpt(
             "-limitdescendantsize=<n>",
             strprintf("Do not accept transactions if any ancestor would have "
-                      "more than <n> kilobytes of in-mempool descendants "
+                      "more than <n>*1000 bytes of in-mempool descendants "
                       "(default: %u).",
                       DEFAULT_DESCENDANT_SIZE_LIMIT));
     }
@@ -918,7 +918,7 @@ std::string HelpMessage(HelpMessageMode mode) {
     strUsage += HelpMessageOpt(
         "-maxstackmemoryusageconsensus",
         strprintf(_("Set maximum stack memory usage in bytes used for script verification "
-                    "we're willing to to accept from any source (0 = unlimited) "
+                    "we're willing to accept from any source (0 = unlimited) "
                     "after Genesis is activated (consensus level). This is a required parameter.")));
     strUsage += HelpMessageOpt(
         "-maxstackmemoryusagepolicy",
@@ -1094,16 +1094,6 @@ std::string HelpMessage(HelpMessageMode mode) {
         "-invalidcsfreq=<n>",
          strprintf("Set the limit on the number of invalid checksums received over a given time period from a single node  (default: %d)",
             DEFAULT_INVALID_CHECKSUM_FREQUENCY)) ;
-
-    strUsage += HelpMessageOpt(
-        "-invalidheaderinterval=<n>",
-         strprintf("Set the time limit on the transmission of message headers from the local node in milliseconds (default: %dms)",
-            DEFAULT_MIN_TIME_INTERVAL_HEADER_MS)) ;
-
-    strUsage += HelpMessageOpt(
-        "-invalidheaderfreq=<n>",
-         strprintf("Set the limit on the number of message headers transmitted from the local node over a given time period (default: %d)",
-           DEFAULT_INVALID_HEADER_FREQUENCY)) ;
 
     /** COrphanTxns */
     strUsage += HelpMessageGroup(_("Orphan txns config :"));

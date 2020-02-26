@@ -7,10 +7,6 @@ import sys
 
 def setup():
     global args, workdir
-
-
-    print("Setting up gitian!")
-    
     programs = ['ruby', 'git', 'apt-cacher-ng', 'make', 'wget']
     if args.kvm:
         programs += ['python-vm-builder', 'qemu-kvm', 'qemu-utils']
@@ -31,7 +27,7 @@ def setup():
     if not os.path.isdir('gitian-builder'):
         subprocess.check_call(['git', 'clone', 'https://github.com/devrandom/gitian-builder.git'])
     if not os.path.isdir('bitcoin-sv'):
-        subprocess.check_call(['git', 'clone', 'https://github.com/vvranjek/svtest'])
+        subprocess.check_call(['git', 'clone', 'https://github.com/bitcoin-sv/bitcoin-sv.git'])
     os.chdir('gitian-builder')
     make_image_prog = ['bin/make-base-vm', '--suite', 'bionic', '--arch', 'amd64']
     if args.docker:
