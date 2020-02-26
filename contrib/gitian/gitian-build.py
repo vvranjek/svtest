@@ -7,6 +7,10 @@ import sys
 
 def setup():
     global args, workdir
+
+
+    print("Setting up gitian!")
+    
     programs = ['ruby', 'git', 'apt-cacher-ng', 'make', 'wget']
     if args.kvm:
         programs += ['python-vm-builder', 'qemu-kvm', 'qemu-utils']
